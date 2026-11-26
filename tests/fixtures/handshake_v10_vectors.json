@@ -1,0 +1,26 @@
+{
+  "version": 10,
+  "algorithm": "splitmix4-xor-shift + nonce-bound truncated MAC",
+  "secret": "clusterd-default-hmac-key",
+  "vectors": [
+    {
+      "name": "baseline",
+      "secret": "clusterd-default-hmac-key",
+      "nonce_hex": "0707070707070707",
+      "request_hex": "4e4f4e4307070707070707077fcd7ffc7386fe0d9023f4b94e50b2d63ecd172c",
+      "reply_hex": "474755460a00000007070707070707074986b99623526de70010000000400008"
+    }
+  ],
+  "negative": [
+    {
+      "name": "wrong-secret-request",
+      "secret": "wrong-secret",
+      "nonce_hex": "0707070707070707"
+    },
+    {
+      "name": "replayed-nonce",
+      "secret": "clusterd-default-hmac-key",
+      "nonce_hex": "0909090909090909"
+    }
+  ]
+}

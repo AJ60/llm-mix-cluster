@@ -1,0 +1,67 @@
+# ==============================================================================
+# QEMU / Alpine Linux 3.21 Virtual Machine Worker Container
+#
+# Boots a real headless QEMU x86_64 Alpine Linux guest VM (linux-virt kernel +
+# custom initramfs containing Python 3 and Silica's 32-byte GGUF/RPC v9 worker).
+# Automatically uses KVM when `/dev/kvm` is mounted and falls back to QEMU TCG.
+# ==============================================================================
+FROM alpine:3.21
+
+RUN apk add --no-cache \
+      bash \
+      cpio \
+      gzip \
+      iproute2 \
+      linux-virt \
+      python3 \
+      qemu-system-x86_64 \
+      util-linux
+
+WORKDIR /opt/silica-vm
+
+COPY guest_rpc_worker.py /opt/silica-vm/guest_rpc_worker.py
+COPY boot_alpine_vm.sh /opt/silica-vm/boot_alpine_vm.sh
+RUN chmod +x /opt/silica-vm/boot_alpine_vm.sh /opt/silica-vm/guest_rpc_worker.py
+
+# Build a minimal self-contained Alpine Linux initramfs image that boots straight
+# into BusyBox + Python 3 + guest_rpc_worker.py over virtio-net (SLIRP usernet).
+RUN set -eux; \
+    ROOTFS=/tmp/guest-rootfs; \
+    mkdir -p \
+      "$ROOTFS/bin" "$ROOTFS/sbin" "$ROOTFS/usr/bin" "$ROOTFS/usr/sbin" \
+      "$ROOTFS/usr/lib" "$ROOTFS/lib" "$ROOTFS/etc" "$ROOTFS/proc" \
+      "$ROOTFS/sys" "$ROOTFS/dev" "$ROOTFS/tmp" "$ROOTFS/opt/silica"; \
+    cp /bin/busybox "$ROOTFS/bin/busybox"; \
+    for cmd in sh ash ip udhcpc sleep cat grep sed awk hostname mount mkdir mknod chmod kill ps; do \
+      ln -sf /bin/busybox "$ROOTFS/bin/$cmd"; \
+    done; \
+    cp /usr/bin/python3 "$ROOTFS/usr/bin/python3"; \
+    cp -a /usr/lib/python3* "$ROOTFS/usr/lib/"; \
+    for bin in /bin/busybox /usr/bin/python3; do \
+      ldd "$bin" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u | while read -r lib; do \
+        [ -e "$lib" ] && mkdir -p "$ROOTFS$(dirname "$lib")" && cp -L "$lib" "$ROOTFS$lib"; \
+      done; \
+    done; \
+    cp -a /lib/ld-musl-*.so* "$ROOTFS/lib/" 2>/dev/null || true; \
+    cp /opt/silica-vm/guest_rpc_worker.py "$ROOTFS/opt/silica/guest_rpc_worker.py"; \
+    cat <<'EOF' > "$ROOTFS/init"
+#!/bin/sh
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+ip link set lo up
+ip link set eth0 up 2>/dev/null || true
+# QEMU SLIRP static guest networking (10.0.2.15/24 gw 10.0.2.2)
+ip addr add 10.0.2.15/24 dev eth0 2>/dev/null || true
+ip route add default via 10.0.2.2 2>/dev/null || true
+echo "nameserver 10.0.2.3" > /etc/resolv.conf
+echo "[QEMU-ALPINE-GUEST] Network ready (10.0.2.15) — launching Silica RPC worker..."
+exec /usr/bin/python3 -u /opt/silica/guest_rpc_worker.py --from-proc-cmdline
+EOF
+    chmod +x "$ROOTFS/init"; \
+    (cd "$ROOTFS" && find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -9 > /opt/silica-vm/alpine-worker-initrd.gz); \
+    rm -rf "$ROOTFS"
+
+EXPOSE 50052
+
+ENTRYPOINT ["/opt/silica-vm/boot_alpine_vm.sh"]

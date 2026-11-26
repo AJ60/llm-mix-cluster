@@ -1,0 +1,6 @@
+{
+  "name": "Silica Cluster",
+  "description": "Decentralized mobile AI cluster console for Android with hardware-probed RPC engine controls, auto-discovery, live LAN/USB shard topology, first-run tensor caching, and streaming OpenAI-compatible local LLM chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_LOCAL_AI_CLUSTER"]
+}

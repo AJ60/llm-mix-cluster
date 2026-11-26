@@ -1,0 +1,72 @@
+<resources>
+    <string name="app_name">Silica Cluster</string>
+    <string name="silica_tagline">Decentralized Mobile AI Cluster</string>
+
+    <!-- Navigation Tabs -->
+    <string name="tab_command">Node</string>
+    <string name="tab_cluster">Cluster</string>
+    <string name="tab_chat">Chat</string>
+
+    <!-- Command Tab -->
+    <string name="cmd_engine_title">Silica Node Engine</string>
+    <string name="cmd_role_worker">Worker Node</string>
+    <string name="cmd_role_master">Master Bridge</string>
+    <string name="cmd_stop_free_ram">Stop &amp; Free RAM</string>
+    <string name="cmd_auto_tune">Auto-Tune</string>
+    <string name="cmd_tuning_busy">Calibrating…</string>
+    <string name="cmd_section_telemetry">Live Hardware Telemetry</string>
+    <string name="cmd_section_engine">Model &amp; Compute Engine</string>
+    <string name="cmd_section_bridge">Network Bridge &amp; Master</string>
+    <string name="cmd_section_terminal">Engine Terminal</string>
+    <string name="cmd_pick_gguf">Pick Local GGUF</string>
+    <string name="cmd_select_model">Select Model</string>
+    <string name="cmd_threads_label">CPU Threads</string>
+    <string name="cmd_ram_cap_label">LMKD Safe RAM Cap</string>
+    <string name="cmd_context_label">Context Window</string>
+    <string name="cmd_kv_quant_label">KV Cache Quant</string>
+    <string name="cmd_bridge_usb">USB ADB Loopback</string>
+    <string name="cmd_bridge_wifi">Wi-Fi LAN HMAC</string>
+    <string name="cmd_master_url_label">Master API URL</string>
+    <string name="cmd_cluster_secret_label">Cluster HMAC Secret</string>
+    <string name="cmd_ping_sync">Ping &amp; Sync</string>
+    <string name="cmd_run_diagnostics">6-Check Diagnostics</string>
+    <string name="cmd_clear_logs">Clear</string>
+    <string name="cmd_copy_logs">Copy</string>
+    <string name="cmd_terminal_empty">Engine idle. Toggle Silica Node Engine ON or run Auto-Detect to stream live telemetry.</string>
+
+    <!-- Cluster Tab -->
+    <string name="cluster_topology_title">Star Cluster Topology</string>
+    <string name="cluster_auto_detect">Auto-Detect</string>
+    <string name="cluster_scanning">Scanning…</string>
+    <string name="cluster_qr_pair">QR Pair</string>
+    <string name="cluster_add_peer">Add Peer</string>
+    <string name="cluster_refresh">Sync</string>
+    <string name="cluster_nodes_section">Active &amp; Paired Nodes</string>
+    <string name="cluster_cache_title">First-Run Tensor Cache</string>
+    <string name="cluster_cache_subtitle">Persists streamed layer weights on flash to avoid slow-Wi-Fi re-downloads.</string>
+    <string name="cluster_cache_clear">Clear Cache</string>
+    <string name="cluster_empty_peers">No remote peers detected yet. Tap Auto-Detect on your local Wi-Fi, scan a Master QR code, or add a peer manually.</string>
+
+    <!-- Chat Tab -->
+    <string name="chat_new_session">New Chat</string>
+    <string name="chat_sessions">Sessions</string>
+    <string name="chat_endpoint_config">Endpoint</string>
+    <string name="chat_composer_placeholder">Message your local AI cluster…</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_stop">Stop</string>
+    <string name="chat_empty_title">Distributed Local AI Ready</string>
+    <string name="chat_empty_subtitle">Prompts stream directly to your LAN or USB Master OpenAI endpoint with zero cloud dependencies.</string>
+    <string name="chat_offline_title">Master Endpoint Unreachable</string>
+    <string name="chat_offline_body">Start your LAN or USB Master server, then tap Auto-Detect or configure the Master API URL.</string>
+
+    <!-- Dialogs & Actions -->
+    <string name="dialog_model_endpoint_title">Model &amp; Master Endpoint</string>
+    <string name="dialog_add_peer_title">Add Cluster Peer</string>
+    <string name="dialog_diagnostics_title">Node Health Diagnostics</string>
+    <string name="dialog_sessions_title">Local Chat Sessions</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_close">Close</string>
+    <string name="btn_delete">Delete</string>
+    <string name="btn_retry">Retry</string>
+</resources>

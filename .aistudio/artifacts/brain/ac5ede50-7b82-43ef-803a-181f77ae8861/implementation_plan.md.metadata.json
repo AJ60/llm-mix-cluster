@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for extending FloatingResourceHud with an expandable, read-only per-layer VRAM utilization breakdown featuring stacked weights + KV cache bars and bottleneck filters.",
+  "updatedAt":  "2026-11-23T22:21:59.418475870Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

@@ -1,0 +1,24 @@
+# ==============================================================================
+# Silica Cluster Master image for multi-VM Docker Compose integration testing.
+# Uses the test-only Express compatibility coordinator (legacyServer.ts).
+# ==============================================================================
+FROM node:22-alpine
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json vite.config.ts index.html legacyServer.ts ./
+COPY src/ ./src/
+COPY public/ ./public/
+
+RUN mkdir -p /models && chown -R node:node /app /models
+USER node
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+EXPOSE 3000
+EXPOSE 50050/udp
+
+CMD ["npx", "tsx", "legacyServer.ts"]

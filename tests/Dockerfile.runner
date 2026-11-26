@@ -1,0 +1,12 @@
+# ==============================================================================
+# Lightweight Python 3.12 Alpine test runner for Silica Cluster VM tests
+# ==============================================================================
+FROM python:3.12-alpine
+WORKDIR /tests
+
+RUN apk add --no-cache util-linux
+
+COPY *.py ./
+COPY qemu/guest_rpc_worker.py ./qemu/guest_rpc_worker.py
+
+CMD ["python3", "-u", "test_cluster_node.py", "-v"]

@@ -1,0 +1,33 @@
+{
+  "name": "clusterlab",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build:client && cargo run --manifest-path silica-core/Cargo.toml -- --port 3000",
+    "silica": "tsx bin/silica.ts",
+    "build:client": "tsc -b && vite build",
+    "build": "npm run build:client",
+    "start": "npm run build:client && cargo run --release --manifest-path silica-core/Cargo.toml -- --port 3000",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/__tests__/clusterdApi.test.ts src/__tests__/virtualEnvironmentsSmallModel.test.ts src/domain/__tests__/starClusterPlanner.test.ts src/domain/__tests__/tensorCache.test.ts src/domain/__tests__/chatStateCache.test.ts src/domain/__tests__/backendTuner.test.ts src/data/__tests__/localModelsScanner.test.ts src/data/__tests__/hfModelsCatalog.test.ts",
+    "preview": "vite preview --host 0.0.0.0 --port 3000"
+  },
+  "dependencies": {
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "esbuild": "^0.25.12",
+    "tailwindcss": "^4.1.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

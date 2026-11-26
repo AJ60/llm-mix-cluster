@@ -1,0 +1,198 @@
+# ==============================================================================
+# Silica Cluster — QEMU / Alpine Linux Multi-VM Test Orchestration
+#
+# Boots:
+#   - silica-master          (172.29.0.10:3000) : Silica Cluster coordinator
+#   - qemu-alpine-worker-1   (172.29.0.21:50052): QEMU/Alpine x86_64 GPU/Linux VM
+#   - qemu-alpine-worker-2   (172.29.0.22:50052): QEMU/Alpine x86_64 Edge/Mobile VM
+#   - qemu-alpine-rogue      (172.29.0.29:50052): QEMU/Alpine VM with bad secret
+#   - test-runner            (172.29.0.50)      : Python unittest suite runner
+#
+# Run:
+#   docker compose -f tests/docker-compose.yaml up --build --abort-on-container-exit
+#   docker compose -f tests/docker-compose.yaml down -v
+# ==============================================================================
+
+services:
+  silica-master:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile.master
+    container_name: silica-master-vm-test
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      CLUSTER_SECRET: "${CLUSTER_SECRET:-clusterd-default-hmac-key}"
+    ports:
+      - "3000:3000"
+      - "50050:50050/udp"
+    volumes:
+      - silica_test_models:/models
+    networks:
+      silica_vm_net:
+        ipv4_address: 172.29.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  qemu-alpine-worker-1:
+    build:
+      context: ./qemu
+      dockerfile: Dockerfile.qemu-alpine
+    container_name: silica-qemu-alpine-worker-1
+    depends_on:
+      silica-master:
+        condition: service_healthy
+    environment:
+      VM_NAME: "qemu-alpine-worker-1"
+      VM_MEMORY_MB: "384"
+      VM_CPUS: "2"
+      WORKER_ID: "qemu-alpine-gpu-1"
+      WORKER_LABEL: "QEMU-Alpine-3.21-Worker-1"
+      WORKER_PLATFORM: "Linux"
+      WORKER_OS: "linux"
+      WORKER_LINK: "Ethernet 2.5G"
+      WORKER_IP: "172.29.0.21"
+      RPC_PORT: "50052"
+      MASTER_URL: "http://172.29.0.10:3000"
+      CLUSTER_SECRET: "${CLUSTER_SECRET:-clusterd-default-hmac-key}"
+      HEARTBEAT_INTERVAL_SEC: "6"
+      TOTAL_RAM_MB: "16384"
+      AVAILABLE_RAM_MB: "12800"
+      VRAM_MB: "8192"
+      BIG_CORES: "8"
+      TEMP_C: "48"
+      ROGUE_MODE: "0"
+    expose:
+      - "50052"
+    networks:
+      silica_vm_net:
+        ipv4_address: 172.29.0.21
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 50052), 2); s.close()"]
+      interval: 4s
+      timeout: 3s
+      retries: 30
+      start_period: 12s
+
+  qemu-alpine-worker-2:
+    build:
+      context: ./qemu
+      dockerfile: Dockerfile.qemu-alpine
+    container_name: silica-qemu-alpine-worker-2
+    depends_on:
+      silica-master:
+        condition: service_healthy
+    environment:
+      VM_NAME: "qemu-alpine-worker-2"
+      VM_MEMORY_MB: "384"
+      VM_CPUS: "2"
+      WORKER_ID: "qemu-alpine-mobile-2"
+      WORKER_LABEL: "QEMU-Alpine-3.21-Worker-2"
+      WORKER_PLATFORM: "Android"
+      WORKER_OS: "android"
+      WORKER_LINK: "USB-C Tunnel"
+      WORKER_IP: "172.29.0.22"
+      RPC_PORT: "50052"
+      MASTER_URL: "http://172.29.0.10:3000"
+      CLUSTER_SECRET: "${CLUSTER_SECRET:-clusterd-default-hmac-key}"
+      HEARTBEAT_INTERVAL_SEC: "6"
+      TOTAL_RAM_MB: "8192"
+      AVAILABLE_RAM_MB: "5600"
+      VRAM_MB: "0"
+      BIG_CORES: "4"
+      TEMP_C: "35"
+      ROGUE_MODE: "0"
+    expose:
+      - "50052"
+    networks:
+      silica_vm_net:
+        ipv4_address: 172.29.0.22
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 50052), 2); s.close()"]
+      interval: 4s
+      timeout: 3s
+      retries: 30
+      start_period: 12s
+
+  qemu-alpine-rogue:
+    build:
+      context: ./qemu
+      dockerfile: Dockerfile.qemu-alpine
+    container_name: silica-qemu-alpine-rogue
+    depends_on:
+      silica-master:
+        condition: service_healthy
+    environment:
+      VM_NAME: "qemu-alpine-rogue"
+      VM_MEMORY_MB: "256"
+      VM_CPUS: "1"
+      WORKER_ID: "qemu-alpine-rogue-unauth"
+      WORKER_LABEL: "QEMU-Alpine-Rogue-VM"
+      WORKER_PLATFORM: "Linux"
+      WORKER_OS: "linux"
+      WORKER_LINK: "Wi-Fi LAN"
+      WORKER_IP: "172.29.0.29"
+      RPC_PORT: "50052"
+      MASTER_URL: "http://172.29.0.10:3000"
+      CLUSTER_SECRET: "wrong-untrusted-secret"
+      HEARTBEAT_INTERVAL_SEC: "0"
+      TOTAL_RAM_MB: "4096"
+      AVAILABLE_RAM_MB: "2048"
+      VRAM_MB: "0"
+      BIG_CORES: "2"
+      TEMP_C: "42"
+      ROGUE_MODE: "1"
+    expose:
+      - "50052"
+    networks:
+      silica_vm_net:
+        ipv4_address: 172.29.0.29
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 50052), 2); s.close()"]
+      interval: 4s
+      timeout: 3s
+      retries: 30
+      start_period: 12s
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    container_name: silica-vm-test-runner
+    depends_on:
+      silica-master:
+        condition: service_healthy
+      qemu-alpine-worker-1:
+        condition: service_healthy
+      qemu-alpine-worker-2:
+        condition: service_healthy
+      qemu-alpine-rogue:
+        condition: service_healthy
+    environment:
+      CLUSTER_TEST_MODE: "qemu"
+      SILICA_MASTER_URL: "http://172.29.0.10:3000"
+      CLUSTER_SECRET: "${CLUSTER_SECRET:-clusterd-default-hmac-key}"
+      SILICA_MODELS_DIR: "/models"
+      QEMU_WORKER_1_ADDR: "172.29.0.21:50052"
+      QEMU_WORKER_2_ADDR: "172.29.0.22:50052"
+      QEMU_ROGUE_ADDR: "172.29.0.29:50052"
+    volumes:
+      - silica_test_models:/models
+    networks:
+      silica_vm_net:
+        ipv4_address: 172.29.0.50
+    command: ["python3", "-u", "test_cluster_node.py", "-v"]
+
+networks:
+  silica_vm_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+
+volumes:
+  silica_test_models:

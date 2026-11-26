@@ -1,0 +1,96 @@
+name: Silica Cluster CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend-verify:
+    name: Frontend & Bridge (Lint, Test, Build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check (Lint)
+        run: npm run lint
+
+      - name: Build clusterd for API harness tests
+        run: cargo build --manifest-path silica-core/Cargo.toml
+
+      - name: Run unit & API test suite
+        run: npm test
+
+      - name: Build production web bundle
+        run: npm run build
+
+  rust-verify:
+    name: Pure-Rust clusterd Engine (Build & Test)
+    needs: [frontend-verify]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 (for rust-embed dist assets)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Build dist assets for rust-embed
+        run: npm ci && npm run build
+
+      - name: Setup Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release clusterd binary & run Rust tests
+        working-directory: silica-core
+        run: cargo build --release && cargo test
+
+  android-verify:
+    name: Android Companion (Kotlin Compile Gate)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Compile Android Debug Kotlin sources
+        run: chmod +x ./gradlew && ./gradlew :app:compileDebugKotlin
+
+      - name: Build Vulkan probe native libraries
+        run: ./gradlew :app:externalNativeBuildDebug
+
+      - name: Run Android worker JVM unit tests
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Run native Vulkan probe/C++ tests on host
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror app/src/main/cpp/rpc_server_test.cpp -ldl -pthread -o /tmp/rpc_server_test
+          /tmp/rpc_server_test

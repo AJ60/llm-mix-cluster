@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+*.zip
+cake/
+cake.exe
+exo-repo/
+llama-b11429/
+__pycache__/
+.vscode
+.idea
+Dockerfile

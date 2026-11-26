@@ -1,0 +1,52 @@
+# Dependencies & Build Outputs
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Editor & OS Files
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.log
+
+# Local binaries, archives & caches
+__pycache__/
+*.zip
+cake/
+cake.exe
+exo-repo/
+llama-b11429/
+logs/
+
+# Rust Build Outputs
+target/
+silica-core/target/
+
+android/
+.gradle/
+build/
+app/build/
+local.properties
+debug.keystore
+android/**/build/
+android/**/android/
+.gradle/
+android/local.properties
+*.apk
+*.aab
+
+# Silica Cluster Cache & Runtime Persistence
+.silica-kv-cache/
+cluster_history.json
+
+
