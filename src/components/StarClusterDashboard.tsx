@@ -20,7 +20,6 @@ import {
   PlannedStarNode,
   StarClusterPlan,
 } from '../types/starCluster';
-import { isSameAndroidWorker } from '../domain/starClusterPlanner';
 
 
 interface StarClusterDashboardProps {
@@ -89,16 +88,7 @@ export const StarClusterDashboard: React.FC<StarClusterDashboardProps> = ({
   const rawWorkers = plan.nodes.filter(
     (n) => n.role === 'Worker' && n.isConnected && (n.allocatedLayers ?? 0) > 0
   );
-  const liveWorkers = useMemo(() => {
-    const deduped: PlannedStarNode[] = [];
-    for (const w of rawWorkers) {
-      const isDup = deduped.some((existing) =>
-        isSameAndroidWorker(existing, w) || (existing.ip === w.ip && existing.rpcPort === w.rpcPort)
-      );
-      if (!isDup) deduped.push(w);
-    }
-    return deduped;
-  }, [rawWorkers]);
+  const liveWorkers: PlannedStarNode[] = rawWorkers;
   const masterNode = plan.nodes.find((n) => n.role === 'Master') ?? plan.nodes[0];
   const isEngineLive = Boolean(engineStatus?.running);
 

@@ -8,7 +8,6 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { GgufModelPreset, PlannedStarNode, StarClusterPlan } from '../types/starCluster';
-import { isSameAndroidWorker } from '../domain/starClusterPlanner';
 
 interface ClusterVisualizerTabProps {
   plan: StarClusterPlan;
@@ -47,16 +46,7 @@ export const ClusterVisualizerTab: React.FC<ClusterVisualizerTabProps> = ({
     (n) => n.role === 'Worker' && n.isConnected && (n.allocatedLayers ?? 0) === 0
   );
 
-  // Strict deduplication of physical devices
-  const workers: PlannedStarNode[] = useMemo(() => {
-    const list: PlannedStarNode[] = [];
-    for (const w of rawWorkers) {
-      if (!list.some((ex) => isSameAndroidWorker(ex, w) || (ex.ip === w.ip && ex.rpcPort === w.rpcPort))) {
-        list.push(w);
-      }
-    }
-    return list;
-  }, [rawWorkers]);
+  const workers: PlannedStarNode[] = rawWorkers;
 
   const activeNodes = useMemo(() => {
     return [master, ...workers].filter(Boolean);

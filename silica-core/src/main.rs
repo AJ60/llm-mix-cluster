@@ -645,7 +645,15 @@ async fn collect_nodes(state: &AppState) -> Vec<LiveNodeInput> {
         handshake_verified: true,
         heartbeat_age_s: 0,
     }];
-    nodes.extend(state.registry.active_verified_workers().await);
+    let mut seen = std::collections::HashSet::new();
+    let mut workers = state.registry.active_verified_workers().await;
+    workers.sort_by_key(|node| node.heartbeat_age_s);
+    for worker in workers {
+        let key = (worker.ip.clone(), worker.rpc_port);
+        if seen.insert(key) {
+            nodes.push(worker);
+        }
+    }
     nodes
 }
 
@@ -670,6 +678,25 @@ fn plan_to_ui(
     nodes: &[LiveNodeInput],
     card: &GgufModelCard,
 ) -> serde_json::Value {
+    let kv_per_layer_mb = if card.per_layer_profiles.is_empty() {
+        0.0
+    } else {
+        card.per_layer_profiles
+            .iter()
+            .map(|profile| profile.kv_cache_mb)
+            .sum::<f64>()
+            / card.per_layer_profiles.len() as f64
+    };
+    let layer_weight_mb = if card.per_layer_profiles.is_empty() {
+        0.0
+    } else {
+        card.per_layer_profiles
+            .iter()
+            .map(|profile| profile.total_weight_mb)
+            .sum::<f64>()
+            / card.per_layer_profiles.len() as f64
+    };
+    let total_kv_mb = kv_per_layer_mb * card.block_count as f64;
     let node_values = plan
         .nodes
         .iter()
@@ -707,7 +734,7 @@ fn plan_to_ui(
                 "vramFreeMb": n.vram_safe_mb,
                 "vramTotalMb": input.map(|i| i.vram_total_mb).unwrap_or(0.0),
                 "memBwGbps": input.map(|i| i.mem_bw_gbps).unwrap_or(0.0),
-                "computeTflops": 0.0,
+                "computeTflops": ((input.map(|i| i.mem_bw_gbps).unwrap_or(0.0) / 45.0) * 10.0).round() / 10.0,
                 "physicalCores": input.map(|i| i.big_cores).unwrap_or(0),
                 "rttMs": input.map(|i| i.rtt_p95_ms).unwrap_or(0.0),
                 "pktLossPct": input.map(|i| i.pkt_loss_pct).unwrap_or(0.0),
@@ -726,9 +753,13 @@ fn plan_to_ui(
                 "layerEnd": n.layer_end.unwrap_or(0),
                 "activeParamsB": card.active_params_b,
                 "totalParamsB": card.estimated_params_b,
-                "kvCacheMb": 0.0,
+                "kvCacheMb": (kv_per_layer_mb * n.layer_count as f64 * 10.0).round() / 10.0,
                 "estimatedTokPerSec": n.estimated_tok_per_sec,
-                "nglLayers": 0,
+                "nglLayers": if n.vram_safe_mb > 0.0 && layer_weight_mb > 0.0 {
+                    ((n.vram_safe_mb / layer_weight_mb).floor() as u32).min(n.layer_count)
+                } else {
+                    0
+                },
                 "tuningFlags": plan.cli_args.clone(),
                 "sharePct": n.tensor_split_pct,
                 "pruned": n.pruned,
@@ -738,17 +769,37 @@ fn plan_to_ui(
         })
         .collect::<Vec<_>>();
     let node_sum: f64 = node_values.iter().map(|n| n["allocatedMb"].as_f64().unwrap_or(0.0)).sum();
+    let coverage = if plan.total_model_need_mb > 0.0 {
+        (node_sum / plan.total_model_need_mb * 100.0).min(100.0)
+    } else {
+        0.0
+    };
+    let thermal_rank = |state: planner::ThermalState| match state {
+        planner::ThermalState::Cool => 0u8,
+        planner::ThermalState::Warn => 1,
+        planner::ThermalState::Shed25 => 2,
+        planner::ThermalState::EmergencyOffload => 3,
+    };
+    let worst_thermal = plan
+        .nodes
+        .iter()
+        .map(|n| thermal_rank(n.thermal_state))
+        .max()
+        .unwrap_or(0);
+    let overall_thermal = ["COOL", "WARN", "SHED_25", "EMERGENCY_OFFLOAD"][worst_thermal as usize];
+    let tier_code = if coverage >= 99.0 { "S" } else if coverage >= 75.0 { "A" } else if coverage >= 40.0 { "B" } else { "C" };
+    let fit_verdict = if coverage >= 99.0 { "Fast" } else if coverage >= 60.0 { "Best Fit" } else { "Streaming" };
     serde_json::json!({
-        "tierCode": "A",
-        "tierLabel": "Rust clusterd plan",
+        "tierCode": tier_code,
+        "tierLabel": format!("Rust clusterd plan ({:.0}%)", coverage),
         "masterId": "master-host",
-        "fitVerdict": "Best Fit",
+        "fitVerdict": fit_verdict,
         "totalSafePoolMb": plan.total_safe_pool_mb,
         "totalVramPoolMb": nodes.iter().map(|n| n.vram_free_mb).sum::<f64>(),
         "neededMb": plan.total_model_need_mb,
-        "kvCacheTotalMb": 0.0,
-        "coveragePct": if plan.total_model_need_mb > 0.0 { (node_sum / plan.total_model_need_mb * 100.0).min(100.0) } else { 0.0 },
-        "overallThermalState": "COOL",
+        "kvCacheTotalMb": (total_kv_mb * 10.0).round() / 10.0,
+        "coveragePct": (coverage * 10.0).round() / 10.0,
+        "overallThermalState": overall_thermal,
         "estimatedClusterTokPerSec": plan.nodes.iter().map(|n| n.estimated_tok_per_sec).sum::<f64>(),
         "activeParamsPerTokenB": card.active_params_b,
         "totalParamsB": card.estimated_params_b,

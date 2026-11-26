@@ -1,5 +1,5 @@
 import { apiFetch, initApiTokenFromUrl } from './service/apiAuth';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   Boxes,
@@ -11,18 +11,14 @@ import {
 } from 'lucide-react';
 import {
   BackendTuningConfig,
-  ClusterMode,
   EngineRuntimeStatus,
   GGUF_MODEL_PRESETS,
   GgufModelPreset,
   ClusterTuningAdvice,
-  LearnedEmaProfile,
   LiveHardwareProbe,
   RuntimeClusterSnapshot,
   StarClusterPlan,
 } from './types/starCluster';
-import { createInitialTelemetryState } from './service/nodeClusterService';
-import { buildStarClusterNodes, planStarCluster, isSameAndroidWorker } from './domain/starClusterPlanner';
 import { createDefaultBackendTuningConfig } from './domain/backendTuner';
 import {
   ChatTurn,
@@ -41,6 +37,30 @@ import { ModelLoadConfigDrawer } from './components/ModelLoadConfigDrawer';
 import { JoinWorkerPage } from './components/JoinWorkerPage';
 
 type NavTab = 'chat' | 'visualizer' | 'cluster' | 'models' | 'connect';
+const EMPTY_PLAN: StarClusterPlan = {
+  tierCode: 'C',
+  tierLabel: 'Waiting for coordinator',
+  masterId: '',
+  fitVerdict: 'Streaming',
+  totalSafePoolMb: 0,
+  totalVramPoolMb: 0,
+  neededMb: 0,
+  kvCacheTotalMb: 0,
+  coveragePct: 0,
+  overallThermalState: 'COOL',
+  estimatedClusterTokPerSec: 0,
+  activeParamsPerTokenB: 0,
+  totalParamsB: 0,
+  nodes: [],
+  tensorSplit: [],
+  tensorSplitLabel: '',
+  tensorSplitCsv: '',
+  useNoMmap: false,
+  mmapStreaming: true,
+  autoNkvo: false,
+  cliArgs: [],
+};
+
 
 const THEME_STORAGE_KEY = 'silica.theme.v1';
 
@@ -76,7 +96,6 @@ export function App() {
 
   const [activeModel, setActiveModel] = useState<GgufModelPreset>(GGUF_MODEL_PRESETS[0]);
   const [availableModels, setAvailableModels] = useState<GgufModelPreset[]>(GGUF_MODEL_PRESETS);
-  const [clusterMode, setClusterMode] = useState<ClusterMode>('LIVE_CLUSTER');
   const [tuningConfig, setTuningConfig] = useState<BackendTuningConfig>(() =>
     createDefaultBackendTuningConfig(GGUF_MODEL_PRESETS[0])
   );
@@ -93,7 +112,6 @@ export function App() {
     reloadProgressPct: 0,
   });
   const [upstreamUrl, setUpstreamUrl] = useState<string>('');
-  const [learnedProfile, setLearnedProfile] = useState<LearnedEmaProfile | null>(null);
   const [serverPlan, setServerPlan] = useState<StarClusterPlan | null>(null);
   const [tuningAdvice, setTuningAdvice] = useState<ClusterTuningAdvice | null>(null);
 
@@ -129,13 +147,11 @@ export function App() {
 
   const applyServerSnapshot = useCallback((snap: RuntimeClusterSnapshot) => {
     if (snap.activeModel) setActiveModel(snap.activeModel);
-    if (snap.clusterMode) setClusterMode(snap.clusterMode);
     if (snap.tuningConfig) setTuningConfig(snap.tuningConfig);
     if (snap.engineStatus) setEngineStatus(snap.engineStatus);
     if (typeof snap.upstreamBaseUrl === 'string') setUpstreamUrl(snap.upstreamBaseUrl);
     if (snap.plan) setServerPlan(snap.plan as StarClusterPlan);
     if (snap.tuningAdvice) setTuningAdvice(snap.tuningAdvice);
-    setLearnedProfile(snap.learnedProfile ?? null);
   }, []);
 
   const refreshHardware = useCallback(async () => {
@@ -198,12 +214,7 @@ export function App() {
     };
   }, [refreshState]);
 
-  const plan = useMemo(() => {
-    if (serverPlan) return serverPlan;
-    const telemetry = createInitialTelemetryState(false);
-    const nodes = buildStarClusterNodes(telemetry, clusterMode, 0, tuningConfig, liveHardware);
-    return planStarCluster(nodes, activeModel, undefined, tuningConfig, learnedProfile);
-  }, [clusterMode, tuningConfig, liveHardware, activeModel, learnedProfile, serverPlan]);
+  const plan = serverPlan ?? EMPTY_PLAN;
 
   const handleApplyAndReload = useCallback(
     async (spawnLocalBinary: boolean): Promise<{ ok: boolean; message: string }> => {
@@ -345,19 +356,9 @@ export function App() {
     { id: 'connect', label: 'Connect', icon: <PlugZap className="w-4 h-4" /> },
   ];
 
-  const uniqueLiveWorkers = useMemo(() => {
-    const raw = plan.nodes.filter(
-      (n) => n.role === 'Worker' && n.isConnected && (n.allocatedLayers ?? 0) > 0
-    );
-    const deduped: typeof raw = [];
-    for (const w of raw) {
-      if (!deduped.some((ex) => isSameAndroidWorker(ex, w) || (ex.ip === w.ip && ex.rpcPort === w.rpcPort))) {
-        deduped.push(w);
-      }
-    }
-    return deduped;
-  }, [plan.nodes]);
-  const liveWorkerCount = uniqueLiveWorkers.length;
+  const liveWorkerCount = plan.nodes.filter(
+    (node) => node.role === 'Worker' && node.isConnected && (node.allocatedLayers ?? 0) > 0
+  ).length;
 
   if (pathname === '/join' || pathname.startsWith('/join/')) {
     return (
