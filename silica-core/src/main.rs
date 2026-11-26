@@ -64,6 +64,8 @@ struct AppState {
     api_token: Option<String>,
     benchmarks: Arc<RwLock<Vec<serde_json::Value>>>,
     failover_url: Arc<RwLock<Option<String>>>,
+    hw_cache: Arc<RwLock<Option<(std::time::Instant, hardware::HostHardwareSnapshot)>>>,
+    adb_cache: Arc<RwLock<Option<(std::time::Instant, Vec<String>)>>>,
     port: u16,
 }
 
@@ -131,15 +133,43 @@ async fn beacon_handler(State(state): State<AppState>) -> impl IntoResponse {
         "port": state.port,
         "rpcPort": 50052,
         "protocolVersion": 9,
+        "handshakeVersion": 10,
     }))
 }
 
-async fn hardware_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let hw = probe_real_host_hardware();
-    let workers = state.registry.active_verified_workers().await;
-    let adb_serials = tokio::task::spawn_blocking(setup_adb_usb_tunnels)
+
+async fn cached_hardware(state: &AppState) -> hardware::HostHardwareSnapshot {
+    let now = std::time::Instant::now();
+    if let Some((timestamp, snapshot)) = state.hw_cache.read().await.as_ref() {
+        if now.duration_since(*timestamp) < Duration::from_secs(2) {
+            return snapshot.clone();
+        }
+    }
+    let snapshot = tokio::task::spawn_blocking(probe_real_host_hardware)
+        .await
+        .unwrap_or_else(|_| probe_real_host_hardware());
+    *state.hw_cache.write().await = Some((now, snapshot.clone()));
+    snapshot
+}
+
+async fn cached_adb_serials(state: &AppState) -> Vec<String> {
+    let now = std::time::Instant::now();
+    if let Some((timestamp, serials)) = state.adb_cache.read().await.as_ref() {
+        if now.duration_since(*timestamp) < Duration::from_secs(2) {
+            return serials.clone();
+        }
+    }
+    let serials = tokio::task::spawn_blocking(setup_adb_usb_tunnels)
         .await
         .unwrap_or_default();
+    *state.adb_cache.write().await = Some((now, serials.clone()));
+    serials
+}
+
+async fn hardware_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let hw = cached_hardware(&state).await;
+    let workers = state.registry.active_verified_workers().await;
+    let adb_serials = cached_adb_serials(&state).await;
     let platform = match hw.os_name.as_str() {
         "windows" => "windows",
         "darwin" | "macos" => "darwin",
@@ -293,7 +323,7 @@ async fn reload_model_handler(
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_else(|| ModelLoadConfig::for_card(&card));
 
-    let hw = probe_real_host_hardware();
+    let hw = cached_hardware(&state).await;
     let master_os = match hw.os_name.as_str() {
         "windows" => NodeOs::Windows,
         _ => NodeOs::Linux,
@@ -634,7 +664,7 @@ fn model_card_to_preset(card: &GgufModelCard) -> serde_json::Value {
 }
 
 async fn collect_nodes(state: &AppState) -> Vec<LiveNodeInput> {
-    let hw = probe_real_host_hardware();
+    let hw = cached_hardware(state).await;
     let master_os = match hw.os_name.as_str() {
         "windows" => NodeOs::Windows,
         _ => NodeOs::Linux,
@@ -1047,15 +1077,24 @@ async fn hf_models_handler(
             let name = id.rsplit('/').next().unwrap_or(&id).to_string();
             let params_b = infer_params_from_name(&name);
             let layers = infer_layers_from_name(&name, params_b);
+            let lower = name.to_ascii_lowercase();
+            let (architecture, active_ratio) = if lower.contains("bitnet") || lower.contains("tq1") || lower.contains("ternary") {
+                ("Ternary", 1.0)
+            } else if lower.contains("moe") || lower.contains("mixtral") || lower.contains("a3b") ||
+                lower.contains("a8b") || lower.contains("a22b") || lower.contains("deepseek") {
+                ("MoE", 0.12)
+            } else {
+                ("Dense", 1.0)
+            };
             serde_json::json!({
                 "id": id,
                 "hfRepo": id,
                 "hfUrl": format!("https://huggingface.co/{}", id),
                 "name": name,
                 "author": id.split('/').next().unwrap_or("").to_string(),
-                "architecture": "Dense",
+                "architecture": architecture,
                 "totalParamsB": params_b,
-                "activeParamsB": params_b,
+                "activeParamsB": (params_b * active_ratio * 10.0).round() / 10.0,
                 "layers": layers,
                 "defaultQuant": "Q4_K_M",
                 "sizeMb": params_b * 610.0,
@@ -1611,6 +1650,8 @@ async fn main() {
         api_token,
         benchmarks: Arc::new(RwLock::new(Vec::new())),
         failover_url: Arc::new(RwLock::new(None)),
+        hw_cache: Arc::new(RwLock::new(None)),
+        adb_cache: Arc::new(RwLock::new(None)),
         port,
     };
 

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum SpeculativeMode {
     Off,
     NativeMtp,
+    #[serde(alias = "prompt_lookup")]
     PromptLookupNgram,
     ExternalDraft,
 }
