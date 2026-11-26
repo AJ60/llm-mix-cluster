@@ -13,24 +13,22 @@ import {
 } from 'lucide-react';
 import {
   BackendTuningConfig,
+  ClusterTuningAdvice,
   EngineRuntimeStatus,
   GGUF_MODEL_PRESETS,
   GgufModelPreset,
-  LiveHardwareProbe,
   PlannedStarNode,
   StarClusterPlan,
 } from '../types/starCluster';
 import { isSameAndroidWorker } from '../domain/starClusterPlanner';
-import { analyzeClusterTuning } from '../domain/tuningAdvisor';
 
 
 interface StarClusterDashboardProps {
   activeModel: GgufModelPreset;
   availableModels?: GgufModelPreset[];
   onSelectModel: (model: GgufModelPreset) => void;
-  tuningConfig: BackendTuningConfig;
+  tuningAdvice?: ClusterTuningAdvice | null;
   plan: StarClusterPlan;
-  liveHardware?: LiveHardwareProbe;
   engineStatus?: EngineRuntimeStatus;
   onRescanDevices: () => void;
   onOpenModels: () => void;
@@ -45,9 +43,8 @@ export const StarClusterDashboard: React.FC<StarClusterDashboardProps> = ({
   activeModel,
   availableModels,
   onSelectModel,
-  tuningConfig,
+  tuningAdvice: serverTuningAdvice,
   plan,
-  liveHardware,
   engineStatus,
   onRescanDevices,
   onOpenModels,
@@ -61,10 +58,15 @@ export const StarClusterDashboard: React.FC<StarClusterDashboardProps> = ({
   const [autoTuning, setAutoTuning] = useState(false);
   const [stoppingEngine, setStoppingEngine] = useState(false);
   const [engineMsg, setEngineMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const tuningAdvice = useMemo(
-    () => analyzeClusterTuning(plan, activeModel, tuningConfig, liveHardware),
-    [plan, activeModel, tuningConfig, liveHardware]
-  );
+  const tuningAdvice: ClusterTuningAdvice = serverTuningAdvice ?? {
+    healthScore: 50,
+    summary: 'Waiting for the Rust coordinator to report tuning advice',
+    items: [],
+    autoTunePatch: {},
+    workerConfigs: {},
+    clusterAdaptiveLoadFactor: 1,
+    hasActionableChanges: false,
+  };
 
   const handleAutoTuneClick = async () => {
     if (!onAutoTune) return;

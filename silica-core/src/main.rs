@@ -14,6 +14,7 @@ mod planner;
 mod protocol;
 mod speculative;
 mod tools;
+mod tuning_advisor;
 mod worker;
 
 use axum::{
@@ -770,18 +771,27 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     let cluster_mode = state.cluster_mode.read().await.clone();
     let nodes = collect_nodes(state).await;
     let mut learned_profile = serde_json::Value::Null;
-    let plan = if let Some(ref card) = card {
+    let mut plan = serde_json::Value::Null;
+    let mut tuning_advice = serde_json::json!({
+        "healthScore": 50,
+        "summary": "No model loaded",
+        "items": [],
+        "autoTunePatch": {},
+        "workerConfigs": {},
+        "clusterAdaptiveLoadFactor": 1.0,
+        "hasActionableChanges": false
+    });
+    if let Some(ref card) = card {
         let profile_key = format!("{}:{}nodes", card.architecture, nodes.len());
         let learned = state.history.read().await.profiles.get(&profile_key).cloned();
         learned_profile = learned
             .as_ref()
             .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
             .unwrap_or(serde_json::Value::Null);
-        let plan = compute_cluster_plan(card, &nodes, &cfg, learned.as_ref());
-        Some(plan_to_ui(&plan, &nodes, card))
-    } else {
-        None
-    };
+        let computed = compute_cluster_plan(card, &nodes, &cfg, learned.as_ref());
+        plan = plan_to_ui(&computed, &nodes, card);
+        tuning_advice = tuning_advisor::analyze(&plan, card, &cfg, &nodes);
+    }
     serde_json::json!({
         "activeModel": card.as_ref().map(model_card_to_preset),
         "clusterMode": cluster_mode,
@@ -798,6 +808,7 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
         "upstreamBaseUrl": eng.upstream_url,
         "learnedProfile": learned_profile,
         "plan": plan,
+        "tuningAdvice": tuning_advice,
     })
 }
 
@@ -1109,8 +1120,20 @@ async fn tuning_auto_apply_handler(
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let mut cfg = state.load_config.read().await.clone();
-    if let Some(patch) = payload.get("tuningConfig").or_else(|| payload.get("patch")) {
-        if let Ok(updated) = serde_json::from_value::<ModelLoadConfig>(patch.clone()) {
+    let patch_source = payload
+        .get("tuningConfig")
+        .or_else(|| payload.get("patch"))
+        .unwrap_or(&payload);
+    if let Ok(updated) = serde_json::from_value::<ModelLoadConfig>(patch_source.clone()) {
+        cfg = updated;
+    } else if let Some(patch) = patch_source.as_object() {
+        let mut value = serde_json::to_value(&cfg).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(base) = value.as_object_mut() {
+            for (key, item) in patch {
+                base.insert(key.clone(), item.clone());
+            }
+        }
+        if let Ok(updated) = serde_json::from_value::<ModelLoadConfig>(value) {
             cfg = updated;
         }
     }
@@ -1400,14 +1423,12 @@ async fn network_audit_handler(State(state): State<AppState>) -> impl IntoRespon
 }
 
 async fn tuning_advice_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let snapshot = build_snapshot(&state).await;
+    let advice = snapshot
+        .get("tuningAdvice")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "healthScore": 50, "items": [] }));
     let cfg = state.load_config.read().await.clone();
-    let card = state.active_card.read().await.clone();
-    let advice = serde_json::json!({
-        "healthScore": if card.is_some() { 90 } else { 50 },
-        "alerts": [],
-        "autoTunePatch": { "contextLength": cfg.context_length, "kvCacheQuant": cfg.kv_cache_quant },
-        "workerConfigs": []
-    });
     Json(serde_json::json!({ "ok": true, "advice": advice, "recommendedConfig": cfg }))
 }
 

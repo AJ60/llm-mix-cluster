@@ -15,6 +15,7 @@ import {
   EngineRuntimeStatus,
   GGUF_MODEL_PRESETS,
   GgufModelPreset,
+  ClusterTuningAdvice,
   LearnedEmaProfile,
   LiveHardwareProbe,
   RuntimeClusterSnapshot,
@@ -94,6 +95,7 @@ export function App() {
   const [upstreamUrl, setUpstreamUrl] = useState<string>('');
   const [learnedProfile, setLearnedProfile] = useState<LearnedEmaProfile | null>(null);
   const [serverPlan, setServerPlan] = useState<StarClusterPlan | null>(null);
+  const [tuningAdvice, setTuningAdvice] = useState<ClusterTuningAdvice | null>(null);
 
   // State-caching layer persisting active chat turns & SSE stream status to localStorage
   const [chatMessages, setChatMessages] = useState<ChatTurn[]>(() => loadChatStateCache().messages);
@@ -132,6 +134,7 @@ export function App() {
     if (snap.engineStatus) setEngineStatus(snap.engineStatus);
     if (typeof snap.upstreamBaseUrl === 'string') setUpstreamUrl(snap.upstreamBaseUrl);
     if (snap.plan) setServerPlan(snap.plan as StarClusterPlan);
+    if (snap.tuningAdvice) setTuningAdvice(snap.tuningAdvice);
     setLearnedProfile(snap.learnedProfile ?? null);
   }, []);
 
@@ -295,13 +298,11 @@ export function App() {
 
   const handleAutoTune = useCallback(
     async (patch: Partial<BackendTuningConfig>): Promise<{ ok: boolean; message: string }> => {
-      const nextCfg: BackendTuningConfig = { ...tuningConfig, ...patch };
-      setTuningConfig(nextCfg);
       try {
         const res = await apiFetch('/api/cluster/tuning/auto-apply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reloadIfRunning: engineStatus?.running }),
+          body: JSON.stringify({ ...patch, reloadIfRunning: engineStatus?.running }),
         });
         if (res.ok) {
           const data = (await res.json()) as { snapshot?: RuntimeClusterSnapshot; reloaded?: boolean };
@@ -478,9 +479,8 @@ export function App() {
             activeModel={activeModel}
             availableModels={availableModels}
             onSelectModel={handleSelectModel}
-            tuningConfig={tuningConfig}
+            tuningAdvice={tuningAdvice}
             plan={plan}
-            liveHardware={liveHardware}
             engineStatus={engineStatus}
             onRescanDevices={refreshHardware}
             onOpenModels={() => setActiveTab('models')}
@@ -516,6 +516,7 @@ export function App() {
         model={activeModel}
         config={tuningConfig}
         plan={plan}
+        tuningAdvice={tuningAdvice}
         engineStatus={engineStatus}
         onUpdateConfig={handleUpdateConfig}
         onApplyAndReload={handleApplyAndReload}

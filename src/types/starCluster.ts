@@ -498,6 +498,7 @@ export interface RuntimeClusterSnapshot {
   upstreamBaseUrl: string;
   engineStatus?: EngineRuntimeStatus;
   learnedProfile?: LearnedEmaProfile | null;
+  tuningAdvice?: ClusterTuningAdvice | null;
   updatedAt: string;
 }
 

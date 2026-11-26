@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {
   BackendTuningConfig,
+  ClusterTuningAdvice,
   ContextLengthOption,
   EngineRuntimeStatus,
   GgufModelPreset,
@@ -19,13 +20,13 @@ import {
   SpeculativeMode,
   StarClusterPlan,
 } from '../types/starCluster';
-import { analyzeClusterTuning } from '../domain/tuningAdvisor';
 
 interface ModelLoadConfigDrawerProps {
   open: boolean;
   model: GgufModelPreset;
   config: BackendTuningConfig;
   plan: StarClusterPlan;
+  tuningAdvice?: ClusterTuningAdvice | null;
   engineStatus?: EngineRuntimeStatus;
   onUpdateConfig: (patch: Partial<BackendTuningConfig>) => void;
   onApplyAndReload: (spawnLocalBinary: boolean) => Promise<{ ok: boolean; message: string }>;
@@ -41,6 +42,7 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
   model,
   config,
   plan,
+  tuningAdvice,
   engineStatus,
   onUpdateConfig,
   onApplyAndReload,
@@ -124,8 +126,8 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
           </div>
 
           {(() => {
-            const advice = analyzeClusterTuning(plan, model, config);
-            if (!advice.hasActionableChanges) return null;
+            const advice = tuningAdvice;
+            if (!advice?.hasActionableChanges) return null;
             return (
               <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
