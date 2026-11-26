@@ -7,14 +7,12 @@ import {
   Play,
   RotateCcw,
   SlidersHorizontal,
-  Terminal,
   X,
 } from 'lucide-react';
 import {
   BackendTuningConfig,
   ClusterTuningAdvice,
   ContextLengthOption,
-  EngineRuntimeStatus,
   GgufModelPreset,
   KvCacheQuantOption,
   SpeculativeMode,
@@ -27,7 +25,6 @@ interface ModelLoadConfigDrawerProps {
   config: BackendTuningConfig;
   plan: StarClusterPlan;
   tuningAdvice?: ClusterTuningAdvice | null;
-  engineStatus?: EngineRuntimeStatus;
   onUpdateConfig: (patch: Partial<BackendTuningConfig>) => void;
   onApplyAndReload: (spawnLocalBinary: boolean) => Promise<{ ok: boolean; message: string }>;
   onResetDefaults: () => void;
@@ -43,7 +40,6 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
   config,
   plan,
   tuningAdvice,
-  engineStatus,
   onUpdateConfig,
   onApplyAndReload,
   onResetDefaults,
@@ -157,29 +153,6 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
           })()}
 
           {/* llama-server Binary Path & Worker Offload Readiness */}
-          <div className="space-y-2.5">
-            <label className="space-y-1.5 block">
-              <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5">
-                  <Terminal className="w-3.5 h-3.5 text-slate-500" />
-                  llama-server Binary Path
-                </span>
-                <span className="font-mono-num text-[11px] text-slate-500 dark:text-slate-400">
-                  {engineStatus?.detectedLlamaBin ? 'Auto-detected' : 'Not in PATH'}
-                </span>
-              </span>
-              <input
-                type="text"
-                placeholder={
-                  engineStatus?.detectedLlamaBin ||
-                  'Auto (or full path e.g. C:\\llama.cpp\\llama-server.exe)'
-                }
-                value={config.binaryPath ?? ''}
-                onChange={(e) => onUpdateConfig({ binaryPath: e.target.value })}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] px-3 py-2 font-mono-num text-slate-900 dark:text-slate-100"
-              />
-            </label>
-
             {missingLocalFile && (
               <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-800 dark:text-amber-300 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -527,7 +500,6 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
             )}
           </button>
         </div>
-      </div>
     </div>
   );
 };

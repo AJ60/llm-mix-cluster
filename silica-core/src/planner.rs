@@ -66,6 +66,18 @@ pub struct LiveNodeInput {
     pub heartbeat_age_s: u64,
 }
 
+fn serialize_manual_tensor_split<S>(value: &Option<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(parts) if !parts.is_empty() => serializer.serialize_str(
+            &parts.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","),
+        ),
+        _ => serializer.serialize_str(""),
+    }
+}
+
 fn deserialize_manual_tensor_split<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<f64>>, D::Error>
@@ -95,13 +107,24 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ModelLoadConfig {
+    pub windows_accelerator: String,
+    pub linux_accelerator: String,
+    pub windows_no_mmap: bool,
+    pub linux_mlock: bool,
+    pub linux_numa_interleave: bool,
+    pub enable_context_shift: bool,
+    pub mmproj_path: Option<String>,
     #[serde(alias = "contextLength")]
     pub context_length: u32,
     #[serde(alias = "kvCacheQuant")]
     pub kv_cache_quant: String, // "f16" | "q8_0" | "q4_0"
     #[serde(alias = "gpuOffloadLayers")]
     pub gpu_offload_layers: Option<u32>,
-    #[serde(default, deserialize_with = "deserialize_manual_tensor_split")]
+    #[serde(
+        default,
+        serialize_with = "serialize_manual_tensor_split",
+        deserialize_with = "deserialize_manual_tensor_split"
+    )]
     pub manual_tensor_split: Option<Vec<f64>>,
     #[serde(alias = "moeCpuOffload")]
     pub moe_cpu_offload: bool,
@@ -111,7 +134,7 @@ pub struct ModelLoadConfig {
     pub draft_model_path: Option<String>,
     #[serde(alias = "draftMaxTokens")]
     pub draft_max_tokens: u32,
-    #[serde(alias = "enableFlashAttn", alias = "flashAttn")]
+    #[serde(rename = "enableFlashAttn", alias = "flashAttn")]
     pub flash_attn: bool,
     #[serde(alias = "contBatching")]
     pub cont_batching: bool,
@@ -135,9 +158,44 @@ pub struct ModelLoadConfig {
     pub enable_jinja: bool,
 }
 
+impl ModelLoadConfig {
+    /// Rust port of `createDefaultBackendTuningConfig` in src/domain/backendTuner.ts.
+    pub fn for_card(card: &crate::gguf::GgufModelCard) -> Self {
+        let mut cfg = Self::default();
+        let native_ternary = card.quant_label.starts_with("TQ");
+        cfg.context_length = if card.arch_mode == crate::gguf::ModelArchMode::Ternary {
+            card.context_length.min(4096).max(2048)
+        } else {
+            card.context_length.max(2048)
+        };
+        cfg.kv_cache_quant = if card.file_size_mb > 12000.0 || card.estimated_params_b >= 14.0 {
+            "q8_0".to_string()
+        } else {
+            "f16".to_string()
+        };
+        cfg.flash_attn = !native_ternary;
+        cfg.moe_cpu_offload = card.arch_mode == crate::gguf::ModelArchMode::MoE;
+        cfg.windows_no_mmap = card.file_size_mb <= 20000.0;
+        cfg.batch_size = if card.arch_mode == crate::gguf::ModelArchMode::Ternary || card.file_size_mb >= 10000.0 {
+            512
+        } else {
+            1024
+        };
+        cfg.mmproj_path = card.mmproj_path.clone();
+        cfg
+    }
+}
+
 impl Default for ModelLoadConfig {
     fn default() -> Self {
         Self {
+            windows_accelerator: "CUDA 12.6".to_string(),
+            linux_accelerator: "CUDA 12.6".to_string(),
+            windows_no_mmap: true,
+            linux_mlock: false,
+            linux_numa_interleave: true,
+            enable_context_shift: true,
+            mmproj_path: None,
             context_length: 16384,
             kv_cache_quant: "q8_0".to_string(),
             gpu_offload_layers: None,

@@ -518,7 +518,6 @@ export function App() {
         config={tuningConfig}
         plan={plan}
         tuningAdvice={tuningAdvice}
-        engineStatus={engineStatus}
         onUpdateConfig={handleUpdateConfig}
         onApplyAndReload={handleApplyAndReload}
         onResetDefaults={handleResetDefaults}

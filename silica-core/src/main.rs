@@ -263,11 +263,7 @@ async fn reload_model_handler(
             );
         }
     };
-    let cfg: ModelLoadConfig = req
-        .config
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    let card = match inspect_gguf_file(PathBuf::from(&model_path).as_path(), cfg.context_length, &cfg.kv_cache_quant) {
+    let card = match inspect_gguf_file(PathBuf::from(&model_path).as_path(), 16384, "q8_0") {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -276,6 +272,10 @@ async fn reload_model_handler(
             );
         }
     };
+    let cfg: ModelLoadConfig = req
+        .config
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_else(|| ModelLoadConfig::for_card(&card));
 
     let hw = probe_real_host_hardware();
     let master_os = match hw.os_name.as_str() {
@@ -958,6 +958,8 @@ async fn models_activate_handler(
     };
     match inspect_gguf_file(PathBuf::from(&path).as_path(), 16384, "q8_0") {
         Ok(card) => {
+            let defaults = ModelLoadConfig::for_card(&card);
+            *state.load_config.write().await = defaults;
             *state.active_card.write().await = Some(card);
             (StatusCode::OK, Json(serde_json::json!({ "ok": true, "snapshot": build_snapshot(&state).await })))
         }
