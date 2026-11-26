@@ -124,6 +124,9 @@ describe('clusterd canonical HTTP API', () => {
       const body = await res.json();
       assert.equal(body.ok, true);
       assert.ok('assignedLayers' in body);
+      assert.ok(body.recommendedConfig, 'register response must carry Rust worker advice');
+      assert.equal(typeof body.recommendedConfig.recommendedThreads, 'number');
+      assert.equal(typeof body.recommendedConfig.adaptiveLoadFactor, 'number');
       const hw = await (await fetch(`${harness.baseUrl}/api/cluster/hardware`)).json();
       assert.ok(hw.connectedDevices.some((d: { id: string }) => d.id === 'node-test'));
     } finally {

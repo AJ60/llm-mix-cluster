@@ -197,12 +197,28 @@ async fn register_worker_handler(
             let layer_start = assigned.and_then(|n| n.get("layerStart")).cloned().unwrap_or(serde_json::json!(0));
             let layer_end = assigned.and_then(|n| n.get("layerEnd")).cloned().unwrap_or(serde_json::json!(0));
             let allocated_mb = assigned.and_then(|n| n.get("allocatedMb")).cloned().unwrap_or(serde_json::json!(0));
+            let recommended_config = snapshot
+                .get("tuningAdvice")
+                .and_then(|a| a.get("workerConfigs"))
+                .and_then(|configs| configs.get(node.node_id.as_str()))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({
+                    "nodeId": node.node_id,
+                    "recommendedThreads": node.big_cores.max(1),
+                    "recommendedSafeRamPct": 50,
+                    "recommendedContextTokens": 4096,
+                    "concurrencyCapped": false,
+                    "concurrencyCap": node.big_cores.max(1),
+                    "adaptiveLoadFactor": 1.0,
+                    "thermalPolicy": "performance"
+                }));
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "ok": true, "node": node, "snapshot": snapshot,
                     "assignedLayers": allocated_layers, "layerStart": layer_start,
-                    "layerEnd": layer_end, "allocatedMb": allocated_mb
+                    "layerEnd": layer_end, "allocatedMb": allocated_mb,
+                    "recommendedConfig": recommended_config
                 })),
             )
         }
