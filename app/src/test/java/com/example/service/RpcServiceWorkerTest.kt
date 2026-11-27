@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.content.ComponentCallbacks2
+import java.io.ByteArrayInputStream
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,6 +25,15 @@ class RpcServiceWorkerTest {
         val nonce = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
         assertTrue(RpcService.decodeV10Request(secret, request).contentEquals(nonce))
         assertNull(RpcService.decodeV10Request("wrong-secret", request))
+    }
+
+    @Test
+    fun `readFully assembles fragmented bandwidth probe frames`() {
+        val data = byteArrayOf(0x42, 0x57, 0x50, 0x52, 0x00, 0x04, 0x00, 0x00)
+        val target = ByteArray(8)
+        assertTrue(RpcService.readFully(ByteArrayInputStream(data), target))
+        assertArrayEquals(data, target)
+        assertFalse(RpcService.readFully(ByteArrayInputStream(byteArrayOf(1, 2)), ByteArray(4)))
     }
 
     @Test

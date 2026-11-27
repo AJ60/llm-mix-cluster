@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process as AndroidProcess
+import android.os.StatFs
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
@@ -367,6 +368,16 @@ data class DeviceTelemetryState(
 class RpcService : Service(), ComponentCallbacks2 {
 
     companion object {
+        internal fun readFully(input: InputStream, buffer: ByteArray): Boolean {
+            var total = 0
+            while (total < buffer.size) {
+                val read = input.read(buffer, total, buffer.size - total)
+                if (read < 0) return false
+                total += read
+            }
+            return true
+        }
+
         const val DEFAULT_RPC_PORT = 50055
         const val CHANNEL_ID = "clusterd_worker_channel"
         const val NOTIFICATION_ID = 50055
@@ -1498,10 +1509,6 @@ class RpcService : Service(), ComponentCallbacks2 {
         }
     }
 
-    /**
-     * Handles the 32-byte `GGUF` / RPC v9 / `v1.0.0` handshake from `clusterd` Master
-     * or USB `adb forward tcp:50052 tcp:50052` health checks.
-     */
     private fun handleIncomingMasterConnection(
         client: Socket,
         usbOnly: Boolean,
@@ -1546,6 +1553,22 @@ class RpcService : Service(), ComponentCallbacks2 {
                 }
                 if (totalRead > 0) {
                     appendLog("Verified nonce-bound GGUF RPC v10 handshake with Master (${socket.inetAddress.hostAddress})")
+                }
+
+                val bwHeader = ByteArray(8)
+                if (readFully(input, bwHeader) &&
+                    bwHeader.copyOfRange(0, 4).contentEquals("BWPR".toByteArray(StandardCharsets.US_ASCII))
+                ) {
+                    val length = ByteBuffer.wrap(bwHeader, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    if (length in 1..(4 * 1024 * 1024)) {
+                        val payload = ByteArray(length)
+                        if (readFully(input, payload)) {
+                            output.write("BWOK".toByteArray(StandardCharsets.US_ASCII))
+                            output.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(length).array())
+                            output.write(payload)
+                            output.flush()
+                        }
+                    }
                 }
             }
         }
@@ -2143,7 +2166,7 @@ class RpcService : Service(), ComponentCallbacks2 {
 
             // 2. HTTP POST registration/heartbeat with real hardware telemetry, exact rpcPort, and flash tensor cache stats
             runCatching {
-                val advertiseIp = if (isUsb || host == "127.0.0.1") {
+                val lanAdvertiseIp = if (isUsb || host == "127.0.0.1") {
                     "127.0.0.1"
                 } else {
                     detectLocalLanIpv4(host)
@@ -2159,8 +2182,8 @@ class RpcService : Service(), ComponentCallbacks2 {
                     put("label", "${curTel.deviceModel.trim()} (Android)")
                     put("platform", "Android")
                     put("osType", "android")
-                    put("addr", "$advertiseIp:$activePort")
-                    put("ip", advertiseIp)
+                    put("addr", "$lanAdvertiseIp:$activePort")
+                    put("ip", lanAdvertiseIp)
                     put("rpcPort", activePort)
                     put("totalRamMb", curTel.totalRamMb)
                     put("availableRamMb", curTel.availableRamMb)
@@ -2186,7 +2209,12 @@ class RpcService : Service(), ComponentCallbacks2 {
                     put("layersShedCount", curTel.layersShedCount)
                     put("computeTflops", if (curTel.hasDotProd) 2.2 else 1.4)
                     put("memBwGbps", 25.6)
-                    put("linkType", if (isUsb || advertiseIp == "127.0.0.1") "USB-C Tunnel" else "Wi-Fi LAN")
+                    val storageStats = StatFs(applicationContext.filesDir.path)
+                    put("storageTotalMb", storageStats.totalBytes / (1024L * 1024L))
+                    put("storageFreeMb", storageStats.availableBytes / (1024L * 1024L))
+                    put("cpuUsagePct", 0.0)
+                    put("gpuUsagePct", 0.0)
+                    put("linkType", if (isUsb || lanAdvertiseIp == "127.0.0.1") "USB-C Tunnel" else "Wi-Fi LAN")
                     val vkReady = curTel.vulkanProbePassed &&
                         curTel.hasVulkan16BitStorage &&
                         !curTel.legacyHardwareMode &&
@@ -2203,7 +2231,7 @@ class RpcService : Service(), ComponentCallbacks2 {
                     put("cachedShards", cacheStats.layerCount)
                     put("cacheHits", cacheStats.hitCount)
                     put("cacheStatus", cacheStats.statusLabel)
-                }.toString()
+                }
 
                 val targetUrls = if (isUsb || host == "127.0.0.1") {
                     listOf("http://127.0.0.1:3000/api/cluster/nodes/register")
@@ -2215,18 +2243,23 @@ class RpcService : Service(), ComponentCallbacks2 {
                 }
 
                 for (u in targetUrls) {
+                    val loopbackTarget = u.startsWith("http://127.0.0.1")
+                    val payloadIp = if (loopbackTarget) "127.0.0.1" else lanAdvertiseIp
+                    jsonPayload.put("ip", payloadIp)
+                    jsonPayload.put("addr", "$payloadIp:$activePort")
+                    jsonPayload.put("linkType", if (loopbackTarget || isUsb) "USB-C Tunnel" else "Wi-Fi LAN")
                     val ok = runCatching {
                         val url = java.net.URL(u)
                         val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                             requestMethod = "POST"
-                            connectTimeout = 1500
-                            readTimeout = 1500
+                            connectTimeout = 3000
+                            readTimeout = 8000
                             doOutput = true
                             setRequestProperty("Content-Type", "application/json")
                         }
                         try {
                             conn.outputStream.use { os ->
-                                os.write(jsonPayload.toByteArray(StandardCharsets.UTF_8))
+                                    os.write(jsonPayload.toString().toByteArray(StandardCharsets.UTF_8))
                             }
                             if (conn.responseCode in 200..299) {
                                 val respBody = runCatching {

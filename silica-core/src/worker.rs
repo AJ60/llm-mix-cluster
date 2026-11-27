@@ -183,6 +183,13 @@ pub async fn run_worker_mode(opts: WorkerCliOptions) -> Result<(), String> {
                     mem_bw_gbps: Some(if snap.vram_total_mb > 0.0 { 180.0 } else { 36.0 }),
                     temp_c: Some(thermal_peak),
                     thermal_headroom: Some((thermal_peak / 95.0).clamp(0.1, 1.0)),
+                    cpu_usage_pct: Some(snap.cpu_usage_pct),
+                    gpu_usage_pct: Some(snap.gpu_usage_pct),
+                    compute_tflops: Some(if snap.vram_total_mb > 0.0 { 24.0 } else { 7.8 }),
+                    storage_total_mb: Some(snap.storage_total_mb),
+                    storage_free_mb: Some(snap.storage_free_mb),
+                    link_bandwidth_mbps: None,
+                    pkt_loss_pct: None,
                 };
 
                 let mut req = client

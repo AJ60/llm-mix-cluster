@@ -84,6 +84,9 @@ pub const HANDSHAKE_CHALLENGE_V10: &[u8] = b"GGUF_PROBE_V10";
 pub const REPLY_CHALLENGE_V10: &[u8] = b"GGUF_REPLY_V10";
 pub const HANDSHAKE_MAGIC_V10: &[u8; 4] = b"NONC";
 pub const HANDSHAKE_VERSION_V10: u32 = 10;
+pub const BANDWIDTH_REQUEST_MAGIC: &[u8; 4] = b"BWPR";
+pub const BANDWIDTH_REPLY_MAGIC: &[u8; 4] = b"BWOK";
+pub const BANDWIDTH_PROBE_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct V10Request {
@@ -97,6 +100,14 @@ pub struct V10Reply {
     pub big_cores: u8,
     pub flags: u16,
     pub status: WorkerHandshakeStatus,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LinkQuality {
+    pub rtt_ms: f64,
+    pub rtt_p95_ms: f64,
+    pub bandwidth_mbps: f64,
+    pub pkt_loss_pct: f64,
 }
 
 pub fn random_nonce() -> [u8; 8] {
@@ -335,6 +346,95 @@ pub fn probe_worker_handshake(
     ))
 }
 
+
+pub fn probe_worker_bandwidth(
+    addr: SocketAddr,
+    secret: &str,
+    timeout: Duration,
+) -> Result<f64, String> {
+    let nonce = random_nonce();
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|e| format!("TCP connect failed to {}: {}", addr, e))?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    stream
+        .write_all(&encode_v10_request(secret, &nonce))
+        .map_err(|e| format!("Failed writing v10 handshake: {}", e))?;
+    let mut reply = [0u8; 32];
+    stream
+        .read_exact(&mut reply)
+        .map_err(|e| format!("Failed reading v10 handshake reply: {}", e))?;
+    verify_v10_reply(secret, &reply, &nonce)
+        .ok_or_else(|| "Worker replied with invalid v10 handshake frame".to_string())?;
+
+    let payload: Vec<u8> = (0..BANDWIDTH_PROBE_BYTES).map(|i| (i % 251) as u8).collect();
+    let mut request = Vec::with_capacity(8 + payload.len());
+    request.extend_from_slice(BANDWIDTH_REQUEST_MAGIC);
+    request.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    request.extend_from_slice(&payload);
+
+    let start = Instant::now();
+    stream
+        .write_all(&request)
+        .map_err(|e| format!("Failed writing bandwidth probe: {}", e))?;
+    let _ = stream.flush();
+    let mut magic = [0u8; 4];
+    stream
+        .read_exact(&mut magic)
+        .map_err(|e| format!("Failed reading bandwidth reply: {}", e))?;
+    if &magic != BANDWIDTH_REPLY_MAGIC {
+        return Err("Worker does not support bandwidth echo".to_string());
+    }
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).map_err(|e| e.to_string())?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len != payload.len() {
+        return Err("Bandwidth echo length mismatch".to_string());
+    }
+    let mut echoed = vec![0u8; len];
+    stream.read_exact(&mut echoed).map_err(|e| e.to_string())?;
+    if echoed != payload {
+        return Err("Bandwidth echo payload mismatch".to_string());
+    }
+    let seconds = start.elapsed().as_secs_f64().max(1e-6);
+    Ok(payload.len() as f64 * 8.0 / 1_000_000.0 / seconds)
+}
+
+pub fn probe_worker_link_quality(
+    addr: SocketAddr,
+    secret: &str,
+    timeout: Duration,
+) -> Result<(GgufHandshakeFrame, LinkQuality), String> {
+    let mut frame: Option<GgufHandshakeFrame> = None;
+    let mut rtts = Vec::new();
+    let mut failures = 0usize;
+    for _ in 0..3 {
+        match probe_worker_handshake(addr, secret, timeout) {
+            Ok((probe_frame, rtt_ms)) => {
+                if frame.is_none() {
+                    frame = Some(probe_frame);
+                }
+                rtts.push(rtt_ms);
+            }
+            Err(_) => failures += 1,
+        }
+    }
+    let frame = frame.ok_or_else(|| "All v10 handshake samples failed".to_string())?;
+    rtts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let rtt_ms = rtts.iter().sum::<f64>() / rtts.len() as f64;
+    let p95_index = (rtts.len() * 95 / 100).min(rtts.len() - 1);
+    let bandwidth_mbps = probe_worker_bandwidth(addr, secret, timeout).unwrap_or(0.0);
+    Ok((
+        frame,
+        LinkQuality {
+            rtt_ms,
+            rtt_p95_ms: rtts[p95_index],
+            bandwidth_mbps,
+            pkt_loss_pct: failures as f64 * 100.0 / 3.0,
+        },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +518,49 @@ mod tests {
         assert_eq!(decoded.safe_cap_mb, 2048);
         assert_eq!(decoded.big_cores, 4);
         assert_eq!(decoded.status, WorkerHandshakeStatus::Ready);
+    }
+
+    #[test]
+    fn bandwidth_probe_echoes_payload() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        let secret = "clusterd-default-hmac-key";
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server_secret = secret.to_string();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("timeout");
+            let mut request = [0u8; 32];
+            stream.read_exact(&mut request).expect("read request");
+            let nonce = decode_v10_request(&server_secret, &request).expect("valid request").nonce;
+            stream
+                .write_all(&encode_v10_reply(
+                    &server_secret,
+                    &nonce,
+                    4096,
+                    8,
+                    0,
+                    WorkerHandshakeStatus::Ready,
+                ))
+                .expect("write reply");
+            let mut header = [0u8; 8];
+            stream.read_exact(&mut header).expect("read header");
+            assert_eq!(&header[0..4], BANDWIDTH_REQUEST_MAGIC);
+            let len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+            let mut payload = vec![0u8; len];
+            stream.read_exact(&mut payload).expect("read payload");
+            stream.write_all(BANDWIDTH_REPLY_MAGIC).expect("write magic");
+            stream
+                .write_all(&(len as u32).to_le_bytes())
+                .expect("write length");
+            stream.write_all(&payload).expect("write payload");
+        });
+        let mbps = probe_worker_bandwidth(addr, secret, Duration::from_secs(2)).expect("bandwidth");
+        assert!(mbps > 0.0);
+        server.join().expect("server thread");
     }
 }

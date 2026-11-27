@@ -16,6 +16,7 @@ or directly inside an isolated Linux namespace during local verification:
 import argparse
 import json
 import os
+import shutil
 import signal
 import socket
 import struct
@@ -99,6 +100,16 @@ def encode_handshake_frame(safe_cap_mb: int, big_cores: int, flags: int, status:
         + STOCK_VERSION_TAG
         + struct.pack("<IIII", safe_cap_mb, big_cores, flags, status)
     )
+
+
+def recv_exact(conn: socket.socket, length: int) -> bytes:
+    data = b""
+    while len(data) < length:
+        chunk = conn.recv(length - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data
 
 
 def parse_proc_cmdline() -> dict[str, str]:
@@ -213,6 +224,9 @@ def main():
             "tempC": args.temp_c,
             "cpuUsagePct": 12,
             "gpuUsagePct": 8 if args.vram_mb > 0 else 0,
+            "computeTflops": 2.2,
+            "storageTotalMb": shutil.disk_usage("/").total / (1024 * 1024),
+            "storageFreeMb": shutil.disk_usage("/").free / (1024 * 1024),
         }
         try:
             st, _ = post_json(f"{args.master_url.rstrip('/')}/api/cluster/nodes/register", payload)
@@ -255,6 +269,13 @@ def main():
                 else:
                     status = 2 if args.temp_c >= 48.0 else (1 if args.temp_c >= 43.0 else 0)
                     conn.sendall(encode_v10_reply(args.secret, nonce, safe_cap_mb, args.big_cores, flags, status))
+                    header = recv_exact(conn, 8)
+                    if len(header) == 8 and header[0:4] == b"BWPR":
+                        length = struct.unpack("<I", header[4:8])[0]
+                        if 0 < length <= 4 * 1024 * 1024:
+                            payload = recv_exact(conn, length)
+                            if len(payload) == length:
+                                conn.sendall(b"BWOK" + struct.pack("<I", length) + payload)
             except Exception:
                 pass
             finally:

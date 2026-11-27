@@ -5,7 +5,7 @@
 //!   GGUF/RPC v9/v1.0.0 handshake AND an active heartbeat (< 30s TTL).
 
 use crate::planner::{LinkTransport, LiveNodeInput, NodeOs};
-use crate::protocol::probe_worker_handshake;
+use crate::protocol::probe_worker_link_quality;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -45,6 +45,20 @@ pub struct WorkerRegisterRequest {
     pub temp_c: Option<f64>,
     #[serde(alias = "thermalHeadroom")]
     pub thermal_headroom: Option<f64>,
+    #[serde(alias = "cpuUsagePct", default)]
+    pub cpu_usage_pct: Option<f64>,
+    #[serde(alias = "gpuUsagePct", default)]
+    pub gpu_usage_pct: Option<f64>,
+    #[serde(alias = "computeTflops", default)]
+    pub compute_tflops: Option<f64>,
+    #[serde(alias = "storageTotalMb", default)]
+    pub storage_total_mb: Option<f64>,
+    #[serde(alias = "storageFreeMb", default)]
+    pub storage_free_mb: Option<f64>,
+    #[serde(alias = "linkBandwidthMbps", default)]
+    pub link_bandwidth_mbps: Option<f64>,
+    #[serde(alias = "pktLossPct", default)]
+    pub pkt_loss_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,8 +91,8 @@ impl WorkerRegistry {
         let sock_addr = SocketAddr::new(ip, port);
 
         let secret = self.cluster_secret.clone();
-        let (frame, rtt_ms) = tokio::task::spawn_blocking(move || {
-            probe_worker_handshake(sock_addr, &secret, Duration::from_millis(1800))
+        let (frame, link) = tokio::task::spawn_blocking(move || {
+            probe_worker_link_quality(sock_addr, &secret, Duration::from_millis(1800))
         })
         .await
         .map_err(|e| format!("Handshake task panicked: {}", e))??;
@@ -110,15 +124,26 @@ impl WorkerRegistry {
             vram_free_mb: req.vram_free_mb.unwrap_or(0.0),
             mem_bw_gbps: req.mem_bw_gbps.unwrap_or(28.0),
             big_cores: req.big_cores.unwrap_or(frame.big_cores).max(1),
-            rtt_p95_ms: rtt_ms,
-            bandwidth_mbps: match transport {
-                LinkTransport::UsbC | LinkTransport::UsbRndis => 480.0,
-                LinkTransport::Ethernet25G => 2500.0,
-                _ => 220.0,
-            },
-            pkt_loss_pct: 0.0,
+            rtt_p95_ms: link.rtt_p95_ms,
+            bandwidth_mbps: req.link_bandwidth_mbps.unwrap_or(if link.bandwidth_mbps > 0.0 {
+                link.bandwidth_mbps
+            } else {
+                match transport {
+                    LinkTransport::UsbC | LinkTransport::UsbRndis => 480.0,
+                    LinkTransport::Ethernet25G => 2500.0,
+                    _ => 220.0,
+                }
+            }),
+            pkt_loss_pct: req.pkt_loss_pct.unwrap_or(link.pkt_loss_pct),
             temp_c: req.temp_c.unwrap_or(34.0),
             thermal_headroom: req.thermal_headroom.unwrap_or(0.25),
+            cpu_usage_pct: req.cpu_usage_pct.unwrap_or(0.0),
+            gpu_usage_pct: req.gpu_usage_pct.unwrap_or(0.0),
+            storage_total_mb: req.storage_total_mb.unwrap_or(0.0),
+            storage_free_mb: req.storage_free_mb.unwrap_or(0.0),
+            compute_tflops: req.compute_tflops.unwrap_or_else(|| {
+                (req.mem_bw_gbps.unwrap_or(28.0) / 45.0 * 10.0).round() / 10.0
+            }),
             handshake_verified: true,
             heartbeat_age_s: 0,
         };

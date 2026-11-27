@@ -5,6 +5,7 @@ import argparse
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,17 @@ def wait_health(base_url: str, timeout: float = 15.0) -> None:
         except Exception:
             time.sleep(0.2)
     raise RuntimeError(f"master at {base_url} not healthy")
+
+
+def wait_tcp_port(port: int, timeout: float = 15.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.2)
+    raise RuntimeError(f"port {port} never started listening")
 
 
 def wait_workers(base_url: str, expected: int, timeout: float = 90.0) -> dict:
@@ -144,11 +156,17 @@ def main() -> int:
                 "true",
             )
 
+        time.sleep(1.5)
         for index in range(len(serials)):
             host_port = PORT_BASE + index
+            wait_tcp_port(host_port)
             deadline = time.time() + 60.0
             while True:
-                ok, frame, rtt = probe_tcp_rpc_handshake("127.0.0.1", host_port, SECRET, timeout=2.0)
+                try:
+                    ok, frame, rtt = probe_tcp_rpc_handshake("127.0.0.1", host_port, SECRET, timeout=4.0)
+                except (OSError, TimeoutError) as exc:
+                    ok, frame, rtt = False, None, 0.0
+                    print(f"port {host_port}: probe retry ({exc})")
                 if ok:
                     print(f"port {host_port}: v10 handshake OK ({rtt:.1f}ms, cap={frame['safe_cap_mb']}MB)")
                     break

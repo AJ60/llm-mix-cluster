@@ -17,6 +17,9 @@ export interface ConnectedDeviceInfo {
   totalRamMb?: number;
   availableRamMb?: number;
   vramMb?: number;
+  vramFreeMb?: number;
+  storageTotalMb?: number;
+  storageFreeMb?: number;
   computeTflops?: number;
   rttMs?: number;
   pktLossPct?: number;
@@ -87,6 +90,8 @@ export interface LiveHardwareProbe {
   gpuTempC?: number;
   cpuUsagePct?: number;
   gpuUsagePct?: number;
+  storageTotalMb?: number;
+  storageFreeMb?: number;
   connectedDevices: ConnectedDeviceInfo[];
 }
 
@@ -326,6 +331,8 @@ export interface StarClusterNode {
   tempC: number;
   cpuUsagePct?: number;
   gpuUsagePct?: number;
+  storageTotalMb?: number;
+  storageFreeMb?: number;
   handshakeVerified?: boolean;
   rpcNativeReady?: boolean;
   heartbeatAgeS?: number;
@@ -353,6 +360,9 @@ export interface PlannedStarNode extends StarClusterNode {
   pruned?: boolean;
   pruneReason?: string;
   statusNote: string;
+  placementScore?: number;
+  handoffCount?: number;
+  estimatedHandoffMs?: number;
 }
 
 export type FitVerdict = 'Fast' | 'Best Fit' | 'Streaming';
@@ -366,6 +376,8 @@ export interface StarClusterPlan {
   totalVramPoolMb: number;
   neededMb: number;
   kvCacheTotalMb: number;
+  effectiveContext?: number;
+  estimatedHandoffMs?: number;
   coveragePct: number;
   overallThermalState: ThermalState;
   estimatedClusterTokPerSec: number;

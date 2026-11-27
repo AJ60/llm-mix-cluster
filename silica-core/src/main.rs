@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Silica Cluster (`clusterd`) — Pure-Rust Symmetric Multi-OS Master & Worker Coordinator.
 //!
 //! Modes:
@@ -166,6 +168,11 @@ async fn cached_adb_serials(state: &AppState) -> Vec<String> {
     serials
 }
 
+async fn inspect_context(state: &AppState) -> (u32, String) {
+    let config = state.load_config.read().await;
+    (config.context_length, config.kv_cache_quant.clone())
+}
+
 async fn hardware_handler(State(state): State<AppState>) -> impl IntoResponse {
     let hw = cached_hardware(&state).await;
     let workers = state.registry.active_verified_workers().await;
@@ -202,6 +209,16 @@ async fn hardware_handler(State(state): State<AppState>) -> impl IntoResponse {
             "handshakeVerified": n.handshake_verified,
             "totalRamMb": n.total_ram_mb,
             "availableRamMb": n.available_ram_mb,
+            "vramMb": n.vram_total_mb,
+            "vramFreeMb": n.vram_free_mb,
+            "cpuUsagePct": n.cpu_usage_pct,
+            "gpuUsagePct": n.gpu_usage_pct,
+            "storageTotalMb": n.storage_total_mb,
+            "storageFreeMb": n.storage_free_mb,
+            "computeTflops": n.compute_tflops,
+            "bandwidthMbps": n.bandwidth_mbps,
+            "rttMs": n.rtt_p95_ms,
+            "pktLossPct": n.pkt_loss_pct,
             "platformLabel": format!("{:?}", n.os),
             "linkType": format!("{:?}", n.transport),
         })).collect::<Vec<_>>(),
@@ -278,8 +295,9 @@ async fn inspect_gguf_handler(
             Json(serde_json::json!({ "error": "Only .gguf model files are supported" })),
         );
     }
-    let ctx = req.context_length.unwrap_or(16384);
-    let kvq = req.kv_cache_quant.unwrap_or_else(|| "q8_0".to_string());
+    let (default_ctx, default_kvq) = inspect_context(&state).await;
+    let ctx = req.context_length.unwrap_or(default_ctx);
+    let kvq = req.kv_cache_quant.unwrap_or(default_kvq);
     match inspect_gguf_file(&path, ctx, &kvq) {
         Ok(card) => {
             let model = model_card_to_preset(&card);
@@ -309,7 +327,14 @@ async fn reload_model_handler(
             );
         }
     };
-    let card = match inspect_gguf_file(PathBuf::from(&model_path).as_path(), 16384, "q8_0") {
+    let cfg_from_request: Option<ModelLoadConfig> = req
+        .config
+        .and_then(|v| serde_json::from_value(v).ok());
+    let (ctx, kvq) = match &cfg_from_request {
+        Some(config) => (config.context_length, config.kv_cache_quant.clone()),
+        None => inspect_context(&state).await,
+    };
+    let card = match inspect_gguf_file(PathBuf::from(&model_path).as_path(), ctx, &kvq) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -318,10 +343,7 @@ async fn reload_model_handler(
             );
         }
     };
-    let cfg: ModelLoadConfig = req
-        .config
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_else(|| ModelLoadConfig::for_card(&card));
+    let cfg: ModelLoadConfig = cfg_from_request.unwrap_or_else(|| ModelLoadConfig::for_card(&card));
 
     let hw = cached_hardware(&state).await;
     let master_os = match hw.os_name.as_str() {
@@ -347,6 +369,11 @@ async fn reload_model_handler(
         pkt_loss_pct: 0.0,
         temp_c: hw.gpu_temp_c.max(hw.cpu_temp_c),
         thermal_headroom: 0.2,
+        cpu_usage_pct: hw.cpu_usage_pct,
+        gpu_usage_pct: hw.gpu_usage_pct,
+        storage_total_mb: hw.storage_total_mb,
+        storage_free_mb: hw.storage_free_mb,
+        compute_tflops: if hw.vram_total_mb > 0.0 { 24.0 } else { 7.8 },
         handshake_verified: true,
         heartbeat_age_s: 0,
     }];
@@ -688,6 +715,11 @@ async fn collect_nodes(state: &AppState) -> Vec<LiveNodeInput> {
         pkt_loss_pct: 0.0,
         temp_c: hw.gpu_temp_c.max(hw.cpu_temp_c),
         thermal_headroom: 0.2,
+        cpu_usage_pct: hw.cpu_usage_pct,
+        gpu_usage_pct: hw.gpu_usage_pct,
+        storage_total_mb: hw.storage_total_mb,
+        storage_free_mb: hw.storage_free_mb,
+        compute_tflops: if hw.vram_total_mb > 0.0 { 24.0 } else { 7.8 },
         handshake_verified: true,
         heartbeat_age_s: 0,
     }];
@@ -724,25 +756,8 @@ fn plan_to_ui(
     nodes: &[LiveNodeInput],
     card: &GgufModelCard,
 ) -> serde_json::Value {
-    let kv_per_layer_mb = if card.per_layer_profiles.is_empty() {
-        0.0
-    } else {
-        card.per_layer_profiles
-            .iter()
-            .map(|profile| profile.kv_cache_mb)
-            .sum::<f64>()
-            / card.per_layer_profiles.len() as f64
-    };
-    let layer_weight_mb = if card.per_layer_profiles.is_empty() {
-        0.0
-    } else {
-        card.per_layer_profiles
-            .iter()
-            .map(|profile| profile.total_weight_mb)
-            .sum::<f64>()
-            / card.per_layer_profiles.len() as f64
-    };
-    let total_kv_mb = kv_per_layer_mb * card.block_count as f64;
+    let kv_per_layer_mb = plan.kv_per_layer_mb;
+    let layer_weight_mb = plan.layer_weight_mb / card.block_count.max(1) as f64;
     let node_values = plan
         .nodes
         .iter()
@@ -780,7 +795,11 @@ fn plan_to_ui(
                 "vramFreeMb": n.vram_safe_mb,
                 "vramTotalMb": input.map(|i| i.vram_total_mb).unwrap_or(0.0),
                 "memBwGbps": input.map(|i| i.mem_bw_gbps).unwrap_or(0.0),
-                "computeTflops": ((input.map(|i| i.mem_bw_gbps).unwrap_or(0.0) / 45.0) * 10.0).round() / 10.0,
+                "computeTflops": input.map(|i| i.compute_tflops).filter(|v| *v > 0.0).unwrap_or_else(|| ((input.map(|i| i.mem_bw_gbps).unwrap_or(0.0) / 45.0) * 10.0).round() / 10.0),
+                "cpuUsagePct": input.map(|i| i.cpu_usage_pct).unwrap_or(0.0),
+                "gpuUsagePct": input.map(|i| i.gpu_usage_pct).unwrap_or(0.0),
+                "storageTotalMb": input.map(|i| i.storage_total_mb).unwrap_or(0.0),
+                "storageFreeMb": input.map(|i| i.storage_free_mb).unwrap_or(0.0),
                 "physicalCores": input.map(|i| i.big_cores).unwrap_or(0),
                 "rttMs": input.map(|i| i.rtt_p95_ms).unwrap_or(0.0),
                 "pktLossPct": input.map(|i| i.pkt_loss_pct).unwrap_or(0.0),
@@ -811,6 +830,9 @@ fn plan_to_ui(
                 "pruned": n.pruned,
                 "pruneReason": n.prune_reason,
                 "statusNote": n.prune_reason.clone().unwrap_or_default(),
+                "placementScore": n.placement_score,
+                "handoffCount": n.handoff_count,
+                "estimatedHandoffMs": n.estimated_handoff_ms,
             })
         })
         .collect::<Vec<_>>();
@@ -843,7 +865,9 @@ fn plan_to_ui(
         "totalSafePoolMb": plan.total_safe_pool_mb,
         "totalVramPoolMb": nodes.iter().map(|n| n.vram_free_mb).sum::<f64>(),
         "neededMb": plan.total_model_need_mb,
-        "kvCacheTotalMb": (total_kv_mb * 10.0).round() / 10.0,
+        "kvCacheTotalMb": (plan.kv_cache_total_mb * 10.0).round() / 10.0,
+        "effectiveContext": plan.effective_context,
+        "estimatedHandoffMs": (plan.estimated_handoff_ms * 10.0).round() / 10.0,
         "coveragePct": (coverage * 10.0).round() / 10.0,
         "overallThermalState": overall_thermal,
         "estimatedClusterTokPerSec": plan.nodes.iter().map(|n| n.estimated_tok_per_sec).sum::<f64>(),
@@ -961,6 +985,7 @@ async fn v1_models_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn local_models_handler(
+    State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let dir = params.get("dir").cloned().unwrap_or_else(|| "./models".to_string());
@@ -973,6 +998,7 @@ async fn local_models_handler(
         dir.clone()
     };
     let path = PathBuf::from(&expanded);
+    let (ctx, kvq) = inspect_context(&state).await;
     let mut models = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&path) {
         for entry in entries.flatten() {
@@ -980,7 +1006,7 @@ async fn local_models_handler(
             if file.extension().and_then(|e| e.to_str()) != Some("gguf") {
                 continue;
             }
-            if let Ok(card) = inspect_gguf_file(&file, 16384, "q8_0") {
+            if let Ok(card) = inspect_gguf_file(&file, ctx, &kvq) {
                 models.push(model_card_to_preset(&card));
             }
         }
@@ -1002,7 +1028,8 @@ async fn models_activate_handler(
             );
         }
     };
-    match inspect_gguf_file(PathBuf::from(&path).as_path(), 16384, "q8_0") {
+    let (ctx, kvq) = inspect_context(&state).await;
+    match inspect_gguf_file(PathBuf::from(&path).as_path(), ctx, &kvq) {
         Ok(card) => {
             let defaults = ModelLoadConfig::for_card(&card);
             *state.load_config.write().await = defaults;
@@ -1552,7 +1579,8 @@ async fn engine_binaries_handler() -> impl IntoResponse {
 
 async fn local_models_add_handler(State(state): State<AppState>, Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
     let path = payload.get("path").or_else(|| payload.get("filePath")).and_then(|v| v.as_str()).unwrap_or("");
-    match inspect_gguf_file(PathBuf::from(path).as_path(), 16384, "q8_0") {
+    let (ctx, kvq) = inspect_context(&state).await;
+    match inspect_gguf_file(PathBuf::from(path).as_path(), ctx, &kvq) {
         Ok(card) => {
             *state.active_card.write().await = Some(card.clone());
             (StatusCode::OK, Json(serde_json::json!({ "ok": true, "model": model_card_to_preset(&card) })))

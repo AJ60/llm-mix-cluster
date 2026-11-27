@@ -8,6 +8,7 @@
 use super::HostHardwareSnapshot;
 use std::fs;
 use std::process::Command;
+use std::time::Duration;
 
 fn read_proc_meminfo() -> (f64, f64) {
     let Ok(content) = fs::read_to_string("/proc/meminfo") else {
@@ -120,6 +121,57 @@ fn probe_rpi_vcgencmd() -> (bool, Option<f64>, Option<String>) {
     (true, temp, throttled)
 }
 
+
+fn query_linux_cpu_usage_pct() -> f64 {
+    fn sample() -> Option<(u64, u64)> {
+        let content = fs::read_to_string("/proc/stat").ok()?;
+        let line = content.lines().find(|line| line.starts_with("cpu "))?;
+        let values: Vec<u64> = line[4..]
+            .split_whitespace()
+            .filter_map(|v| v.parse::<u64>().ok())
+            .collect();
+        if values.len() < 5 {
+            return None;
+        }
+        let total = values.iter().sum();
+        let idle = values[3] + values[4];
+        Some((total, idle))
+    }
+    let (Some((total_a, idle_a)), Some((total_b, idle_b))) = (sample(), {
+        std::thread::sleep(Duration::from_millis(120));
+        sample()
+    }) else {
+        return 0.0;
+    };
+    let total = total_b.saturating_sub(total_a);
+    let idle = idle_b.saturating_sub(idle_a);
+    if total == 0 {
+        return 0.0;
+    }
+    ((1.0 - idle as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+fn query_linux_storage_mb() -> (f64, f64) {
+    let out = Command::new("df").args(["-kP", "."]).output();
+    let Ok(out) = out else {
+        return (0.0, 0.0);
+    };
+    if !out.status.success() {
+        return (0.0, 0.0);
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    let Some(fields) = line.lines().nth(1) else {
+        return (0.0, 0.0);
+    };
+    let parts: Vec<&str> = fields.split_whitespace().collect();
+    if parts.len() < 4 {
+        return (0.0, 0.0);
+    }
+    let total_kb = parts[1].parse::<f64>().unwrap_or(0.0);
+    let free_kb = parts[3].parse::<f64>().unwrap_or(0.0);
+    (total_kb / 1024.0, free_kb / 1024.0)
+}
+
 pub fn probe_linux_hardware() -> HostHardwareSnapshot {
     let (total_ram_mb, available_ram_mb) = read_proc_meminfo();
     let cpu_cores = std::thread::available_parallelism()
@@ -128,6 +180,8 @@ pub fn probe_linux_hardware() -> HostHardwareSnapshot {
     let big_cores = detect_big_core_count(cpu_cores);
     let (is_pi, pi_temp, pi_throttled) = probe_rpi_vcgencmd();
     let cpu_temp_c = pi_temp.unwrap_or_else(read_sys_thermal_c);
+    let cpu_usage_pct = query_linux_cpu_usage_pct();
+    let (storage_total_mb, storage_free_mb) = query_linux_storage_mb();
     let hostname = fs::read_to_string("/etc/hostname")
         .unwrap_or_else(|_| "linux-node".to_string())
         .trim()
@@ -152,8 +206,10 @@ pub fn probe_linux_hardware() -> HostHardwareSnapshot {
         big_cores,
         cpu_temp_c,
         gpu_temp_c,
-        cpu_usage_pct: 0.0,
+        cpu_usage_pct,
         gpu_usage_pct,
+        storage_total_mb,
+        storage_free_mb,
         is_raspberry_pi: is_pi,
         rpi_throttled_hex: pi_throttled,
     }

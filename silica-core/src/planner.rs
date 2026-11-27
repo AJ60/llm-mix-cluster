@@ -11,7 +11,7 @@
 //! 7. Master-pinned `--mmproj` vision projector + embedding/lm_head budget reservation.
 //! 8. Strict stock `llama.cpp v1.0.0` CLI flag allowlist (zero hallucinated flags).
 
-use crate::gguf::{GgufModelCard, ModelArchMode};
+use crate::gguf::{GgufModelCard, LayerFootprint, ModelArchMode};
 use crate::history::LearnedProfile;
 use crate::speculative::SpeculativeMode;
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,11 @@ pub struct LiveNodeInput {
     pub pkt_loss_pct: f64,
     pub temp_c: f64,
     pub thermal_headroom: f64,
+    pub cpu_usage_pct: f64,
+    pub gpu_usage_pct: f64,
+    pub storage_total_mb: f64,
+    pub storage_free_mb: f64,
+    pub compute_tflops: f64,
     pub handshake_verified: bool,
     pub heartbeat_age_s: u64,
 }
@@ -238,12 +243,20 @@ pub struct PlannedNodeAllocation {
     pub pruned: bool,
     pub prune_reason: Option<String>,
     pub estimated_tok_per_sec: f64,
+    pub placement_score: f64,
+    pub handoff_count: u32,
+    pub estimated_handoff_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterPlanOutput {
     pub total_safe_pool_mb: f64,
     pub total_model_need_mb: f64,
+    pub effective_context: u32,
+    pub kv_cache_total_mb: f64,
+    pub kv_per_layer_mb: f64,
+    pub layer_weight_mb: f64,
+    pub estimated_handoff_ms: f64,
     pub use_no_mmap: bool,
     pub mmap_streaming: bool,
     pub auto_nkvo: bool,
@@ -368,6 +381,54 @@ pub fn validate_stock_llama_cpp_flags(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+
+fn activation_transfer_mb(card: &GgufModelCard) -> f64 {
+    card.embedding_length as f64 * 2.0 / (1024.0 * 1024.0)
+}
+
+fn link_cost(a: &LiveNodeInput, b: &LiveNodeInput, activation_mb: f64) -> f64 {
+    let bandwidth = a.bandwidth_mbps.min(b.bandwidth_mbps).max(1.0);
+    let transfer_ms = activation_mb * 8.0 * 1000.0 / bandwidth;
+    let rtt = (a.rtt_p95_ms + b.rtt_p95_ms) * 0.5;
+    let loss = (a.pkt_loss_pct + b.pkt_loss_pct) * 0.5;
+    transfer_ms + rtt * 2.0 + loss * 20.0
+}
+
+fn ordered_worker_chain(
+    master: &LiveNodeInput,
+    workers: &[usize],
+    evaluated: &[(&LiveNodeInput, f64, f64, ThermalState)],
+    activation_mb: f64,
+) -> Vec<usize> {
+    let mut chain: Vec<usize> = Vec::with_capacity(workers.len());
+    for &idx in workers {
+        let node = evaluated[idx].0;
+        let mut best_position = 0usize;
+        let mut best_cost = f64::MAX;
+        for position in 0..=chain.len() {
+            let previous = if position == 0 {
+                master
+            } else {
+                evaluated[chain[position - 1]].0
+            };
+            let next = if position == chain.len() {
+                master
+            } else {
+                evaluated[chain[position]].0
+            };
+            let delta = link_cost(previous, node, activation_mb)
+                + link_cost(node, next, activation_mb)
+                - link_cost(previous, next, activation_mb);
+            if delta < best_cost {
+                best_cost = delta;
+                best_position = position;
+            }
+        }
+        chain.insert(best_position, idx);
+    }
+    chain
+}
+
 /// Computes the complete zero-OOM, cap-bounded, non-uniform cluster plan and stock CLI arguments.
 pub fn compute_cluster_plan(
     card: &GgufModelCard,
@@ -387,23 +448,6 @@ pub fn compute_cluster_plan(
         .map(|n| n.vram_total_mb)
         .unwrap_or(0.0);
 
-    // Automatic `-nkvo` (CPU KV offload) for <= 4 GB GPUs at 32K–131K context or learned OOM profile.
-    let auto_nkvo = cfg.no_kv_offload.unwrap_or_else(|| {
-        let low_vram_long_ctx =
-            master_vram_total > 0.0 && master_vram_total <= 4300.0 && cfg.context_length >= 32768;
-        let learned_flag = learned.map(|l| l.learned_kv_offload).unwrap_or(false);
-        low_vram_long_ctx || learned_flag
-    });
-
-    let total_layer_weights_mb: f64 = card
-        .per_layer_profiles
-        .iter()
-        .map(|l| l.total_weight_mb)
-        .sum();
-    let total_kv_mb: f64 = card.per_layer_profiles.iter().map(|l| l.kv_cache_mb).sum();
-    let total_model_need_mb = card.master_pinned_overhead_mb + total_layer_weights_mb + total_kv_mb;
-
-    // Pre-calculate safe caps & evaluate fast-tier (Master + USB/Ethernet) sufficiency for pruning.
     let mut evaluated: Vec<(&LiveNodeInput, f64, f64, ThermalState)> = live_nodes
         .iter()
         .map(|n| {
@@ -412,7 +456,6 @@ pub fn compute_cluster_plan(
         })
         .collect();
 
-    // Master always first.
     evaluated.sort_by_key(|(n, _, _, _)| if n.is_master { 0 } else { 1 });
 
     let fast_tier_pool_mb: f64 = evaluated
@@ -428,6 +471,49 @@ pub fn compute_cluster_plan(
         .map(|(_, ram, vram, _)| ram + vram)
         .sum();
 
+    let layer_weight_mb: f64 = card
+        .per_layer_profiles
+        .iter()
+        .map(|l| l.total_weight_mb)
+        .sum();
+    let base_context = card.profiled_context.max(4096);
+    let requested_context = cfg.context_length.max(4096).min(card.context_length.max(4096));
+    let kv_per_context_mb = card
+        .per_layer_profiles
+        .iter()
+        .map(|l| l.kv_cache_mb)
+        .sum::<f64>()
+        / base_context as f64;
+    let available_for_kv = (fast_tier_pool_mb - card.master_pinned_overhead_mb - layer_weight_mb)
+        .max(0.0)
+        * 0.9;
+    let max_context_by_memory = (available_for_kv / kv_per_context_mb.max(1e-6)).floor() as u32;
+    let effective_context = [4096u32, 8192, 16384, 32768, 65536, 131072, 262144]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&c| c <= requested_context && c <= max_context_by_memory.max(4096))
+        .unwrap_or(4096);
+    let kv_scale = effective_context as f64 / base_context as f64;
+    let profiles: Vec<LayerFootprint> = card
+        .per_layer_profiles
+        .iter()
+        .map(|profile| LayerFootprint {
+            kv_cache_mb: profile.kv_cache_mb * kv_scale,
+            ..profile.clone()
+        })
+        .collect();
+
+    let auto_nkvo = cfg.no_kv_offload.unwrap_or_else(|| {
+        let low_vram_long_ctx =
+            master_vram_total > 0.0 && master_vram_total <= 4300.0 && effective_context >= 32768;
+        let learned_flag = learned.map(|l| l.learned_kv_offload).unwrap_or(false);
+        low_vram_long_ctx || learned_flag
+    });
+
+    let total_layer_weights_mb: f64 = profiles.iter().map(|l| l.total_weight_mb).sum();
+    let total_kv_mb: f64 = profiles.iter().map(|l| l.kv_cache_mb).sum();
+    let total_model_need_mb = card.master_pinned_overhead_mb + total_layer_weights_mb + total_kv_mb;
     let fast_tier_fits = fast_tier_pool_mb >= total_model_need_mb * 1.05;
 
     let mut active_indices = Vec::new();
@@ -480,6 +566,9 @@ pub fn compute_cluster_plan(
             pruned,
             prune_reason,
             estimated_tok_per_sec: 0.0,
+            placement_score: 0.0,
+            handoff_count: 0,
+            estimated_handoff_ms: 0.0,
         });
     }
 
@@ -508,7 +597,7 @@ pub fn compute_cluster_plan(
     }
 
     // Compute per-active-node desirability weight (bandwidth * EMA efficiency / RTT penalty).
-    let mut raw_weights: Vec<(usize, f64)> = active_indices
+    let raw_weights: Vec<(usize, f64)> = active_indices
         .iter()
         .map(|&idx| {
             let node = evaluated[idx].0;
@@ -525,12 +614,18 @@ pub fn compute_cluster_plan(
     let weight_sum: f64 = raw_weights.iter().map(|(_, w)| *w).sum::<f64>().max(1e-6);
     let total_layer_budget_mb = total_layer_weights_mb + total_kv_mb;
 
-    let total_layers = card.per_layer_profiles.len() as u32;
+    let total_layers = profiles.len() as u32;
     let mb_per_layer = (card.file_size_mb / total_layers.max(1) as f64).max(1.0);
     
     // Master gets first slice [0, master_layers - 1], workers get contiguous subsequent slices
     let master_idx = active_indices.first().copied().unwrap_or(0);
-    let worker_indices: Vec<usize> = active_indices.iter().copied().filter(|&i| i != master_idx).collect();
+    let activation_mb = activation_transfer_mb(card);
+    let worker_indices = ordered_worker_chain(
+        evaluated[master_idx].0,
+        &active_indices.iter().copied().filter(|&i| i != master_idx).collect::<Vec<_>>(),
+        &evaluated,
+        activation_mb,
+    );
 
     let mut total_worker_layers = 0u32;
     let mut worker_layer_counts: Vec<(usize, u32)> = Vec::new();
@@ -579,19 +674,19 @@ pub fn compute_cluster_plan(
         let remaining = total_layers - cursor_layer;
         let last_active_idx = worker_indices.iter().copied().rev().find(|&i| allocations[i].layer_count > 0).unwrap_or(master_idx);
         let layer_mb = |idx: u32| -> f64 {
-            card.per_layer_profiles
+            profiles
                 .get(idx as usize)
                 .map(|p| p.total_weight_mb + p.kv_cache_mb)
                 .unwrap_or(0.0)
         };
-        let avg_layer_mb = if card.per_layer_profiles.is_empty() {
+        let avg_layer_mb = if profiles.is_empty() {
             0.0
         } else {
-            card.per_layer_profiles
+            profiles
                 .iter()
                 .map(|p| p.total_weight_mb + p.kv_cache_mb)
                 .sum::<f64>()
-                / card.per_layer_profiles.len() as f64
+                / profiles.len() as f64
         };
         let used = allocations[last_active_idx]
             .layer_start
@@ -619,7 +714,7 @@ pub fn compute_cluster_plan(
             if let (Some(start), Some(end)) = (allocations[idx].layer_start, allocations[idx].layer_end) {
                 let mut layer_mb = 0.0f64;
                 for l_idx in start..=end {
-                    if let Some(prof) = card.per_layer_profiles.get(l_idx as usize) {
+                    if let Some(prof) = profiles.get(l_idx as usize) {
                         layer_mb += prof.total_weight_mb + prof.kv_cache_mb;
                     }
                 }
@@ -682,6 +777,50 @@ pub fn compute_cluster_plan(
         allocations[idx].estimated_tok_per_sec = (base_tok * share).clamp(1.0, 240.0);
     }
 
+
+    for &idx in &active_indices {
+        if allocations[idx].layer_count == 0 {
+            continue;
+        }
+        if let Some((raw_idx, raw_score)) = raw_weights.iter().find(|(i, _)| *i == idx) {
+            let _ = raw_idx;
+            allocations[idx].placement_score = (raw_score / weight_sum * 1000.0).round() / 10.0;
+        }
+        let order_position = if allocations[idx].is_master {
+            0
+        } else {
+            worker_indices.iter().position(|&i| i == idx).map(|p| p + 1).unwrap_or(0)
+        };
+        let previous = if order_position == 0 {
+            None
+        } else if order_position == 1 {
+            Some(evaluated[master_idx].0)
+        } else {
+            evaluated[worker_indices[order_position - 2]].0.into()
+        };
+        if let Some(previous_node) = previous {
+            allocations[idx].handoff_count = 1;
+            allocations[idx].estimated_handoff_ms =
+                (link_cost(previous_node, evaluated[idx].0, activation_mb) * 10.0).round() / 10.0;
+        }
+    }
+    if allocations[master_idx].layer_count > 0 && worker_indices.iter().any(|&i| allocations[i].layer_count > 0) {
+        let last_worker = worker_indices
+            .iter()
+            .rev()
+            .find(|&&i| allocations[i].layer_count > 0)
+            .copied();
+        if let Some(last_idx) = last_worker {
+            allocations[master_idx].handoff_count = 1;
+            allocations[master_idx].estimated_handoff_ms =
+                (link_cost(evaluated[last_idx].0, evaluated[master_idx].0, activation_mb) * 10.0).round() / 10.0;
+        }
+    }
+    let estimated_handoff_ms: f64 = active_indices
+        .iter()
+        .map(|&i| allocations[i].estimated_handoff_ms)
+        .sum();
+
     let tensor_split_csv = tensor_split
         .iter()
         .map(|v| format!("{:.1}", v))
@@ -707,7 +846,7 @@ pub fn compute_cluster_plan(
         "--port".to_string(),
         "8080".to_string(),
         "-c".to_string(),
-        cfg.context_length.to_string(),
+        effective_context.to_string(),
         "-ctk".to_string(),
         cfg.kv_cache_quant.clone(),
         "-ctv".to_string(),
@@ -797,6 +936,15 @@ pub fn compute_cluster_plan(
     ClusterPlanOutput {
         total_safe_pool_mb,
         total_model_need_mb,
+        effective_context,
+        kv_cache_total_mb: total_kv_mb,
+        kv_per_layer_mb: profiles
+            .iter()
+            .map(|p| p.kv_cache_mb)
+            .sum::<f64>()
+            / profiles.len().max(1) as f64,
+        layer_weight_mb,
+        estimated_handoff_ms,
         use_no_mmap,
         mmap_streaming: !use_no_mmap,
         auto_nkvo,
@@ -842,6 +990,7 @@ mod tests {
             expert_count: if mode == ModelArchMode::MoE { 64 } else { 0 },
             expert_used_count: if mode == ModelArchMode::MoE { 8 } else { 0 },
             context_length: 131072,
+            profiled_context: 16384,
             has_chat_template: true,
             has_native_mtp: false,
             vocab_size: 151936,
@@ -875,6 +1024,11 @@ mod tests {
             pkt_loss_pct: 0.0,
             temp_c: 52.0,
             thermal_headroom: 0.2,
+            cpu_usage_pct: 12.0,
+            gpu_usage_pct: 8.0,
+            storage_total_mb: 512000.0,
+            storage_free_mb: 128000.0,
+            compute_tflops: 24.0,
             handshake_verified: true,
             heartbeat_age_s: 0,
         }
@@ -900,6 +1054,11 @@ mod tests {
             pkt_loss_pct: if rtt > 45.0 { 2.5 } else { 0.0 },
             temp_c: temp,
             thermal_headroom: if temp >= 48.0 { 0.96 } else { 0.3 },
+            cpu_usage_pct: 18.0,
+            gpu_usage_pct: 0.0,
+            storage_total_mb: 128000.0,
+            storage_free_mb: 32000.0,
+            compute_tflops: 2.2,
             handshake_verified: true,
             heartbeat_age_s: 3,
         }
@@ -998,5 +1157,51 @@ mod tests {
         let emitted = serde_json::to_value(&cfg).expect("serialize");
         assert!(emitted.get("contextLength").is_some());
         assert!(emitted.get("manualTensorSplit").is_some());
+    }
+
+    #[test]
+    fn chain_places_fastest_link_adjacent_to_master() {
+        let card = sample_card(36, 120.0, ModelArchMode::Dense, None);
+        let master = master_node(8192.0, 4096.0);
+        let mut usb = android_worker("usb", 8192.0, LinkTransport::UsbC, 1.0, 34.0);
+        usb.bandwidth_mbps = 480.0;
+        let mut wifi = android_worker("wifi", 8192.0, LinkTransport::WifiLan, 60.0, 34.0);
+        wifi.bandwidth_mbps = 80.0;
+        let nodes = vec![master.clone(), usb.clone(), wifi.clone()];
+        let evaluated: Vec<(&LiveNodeInput, f64, f64, ThermalState)> = nodes
+            .iter()
+            .map(|node| {
+                let (ram, vram, thermal) = compute_safe_caps(node);
+                (node, ram, vram, thermal)
+            })
+            .collect();
+        let activation = activation_transfer_mb(&card);
+        assert!(link_cost(&master, &usb, activation) < link_cost(&master, &wifi, activation));
+        let chain = ordered_worker_chain(&master, &[1usize, 2usize], &evaluated, activation);
+        assert_eq!(chain.len(), 2);
+        let first_cost = link_cost(&master, evaluated[chain[0]].0, activation);
+        let last_cost = link_cost(evaluated[*chain.last().unwrap()].0, &master, activation);
+        let best_boundary = link_cost(&master, &usb, activation);
+        assert!(first_cost <= best_boundary + 1e-6 || last_cost <= best_boundary + 1e-6);
+    }
+
+    #[test]
+    fn effective_context_shrinks_to_fit_pool() {
+        let card = sample_card(36, 120.0, ModelArchMode::Dense, None);
+        let nodes = vec![master_node(4096.0, 0.0)];
+        let cfg = ModelLoadConfig {
+            context_length: 131072,
+            ..Default::default()
+        };
+        let plan = compute_cluster_plan(&card, &nodes, &cfg, None);
+        assert!(plan.effective_context >= 4096);
+        assert!(plan.effective_context < 131072);
+        assert!(plan.kv_cache_total_mb > 0.0);
+        let ctx_flag = plan
+            .cli_args
+            .windows(2)
+            .find(|pair| pair[0] == "-c")
+            .expect("-c flag");
+        assert_eq!(ctx_flag[1], plan.effective_context.to_string());
     }
 }

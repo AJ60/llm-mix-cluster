@@ -482,6 +482,7 @@ export function App() {
             onSelectModel={handleSelectModel}
             tuningAdvice={tuningAdvice}
             plan={plan}
+            liveHardware={liveHardware}
             engineStatus={engineStatus}
             onRescanDevices={refreshHardware}
             onOpenModels={() => setActiveTab('models')}

@@ -6,13 +6,16 @@ use super::HostHardwareSnapshot;
 use std::mem::{size_of, zeroed};
 use std::os::windows::io::AsRawHandle;
 use std::process::{Child, Command};
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use std::time::Duration;
+use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
+use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows_sys::Win32::System::Threading::GetSystemTimes;
 
 pub struct WindowsJobGuard {
     handle: HANDLE,
@@ -106,12 +109,61 @@ fn probe_nvidia_gpu() -> Option<(String, f64, f64, f64, f64)> {
     ))
 }
 
+
+fn filetime_ticks(value: &FILETIME) -> u64 {
+    ((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64
+}
+
+fn query_windows_cpu_usage_pct() -> f64 {
+    unsafe {
+        let mut idle_a: FILETIME = zeroed();
+        let mut kernel_a: FILETIME = zeroed();
+        let mut user_a: FILETIME = zeroed();
+        if GetSystemTimes(&mut idle_a, &mut kernel_a, &mut user_a) == 0 {
+            return 0.0;
+        }
+        std::thread::sleep(Duration::from_millis(120));
+        let mut idle_b: FILETIME = zeroed();
+        let mut kernel_b: FILETIME = zeroed();
+        let mut user_b: FILETIME = zeroed();
+        if GetSystemTimes(&mut idle_b, &mut kernel_b, &mut user_b) == 0 {
+            return 0.0;
+        }
+        let idle = filetime_ticks(&idle_b).saturating_sub(filetime_ticks(&idle_a));
+        let kernel = filetime_ticks(&kernel_b).saturating_sub(filetime_ticks(&kernel_a));
+        let user = filetime_ticks(&user_b).saturating_sub(filetime_ticks(&user_a));
+        let system = kernel.saturating_add(user);
+        if system == 0 {
+            return 0.0;
+        }
+        ((1.0 - idle as f64 / system as f64) * 100.0).clamp(0.0, 100.0)
+    }
+}
+
+fn query_windows_storage_mb() -> (f64, f64) {
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+    let root = format!("{}\\", drive.trim_end_matches('\\'));
+    let wide: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let mut free_available = 0u64;
+        let mut total_bytes = 0u64;
+        let mut total_free = 0u64;
+        if GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_available, &mut total_bytes, &mut total_free) == 0 {
+            return (0.0, 0.0);
+        }
+        let mb = 1024.0 * 1024.0;
+        (total_bytes as f64 / mb, free_available as f64 / mb)
+    }
+}
+
 pub fn probe_windows_hardware() -> HostHardwareSnapshot {
     let (total_ram_mb, available_ram_mb) = query_windows_ram_mb();
     let cpu_cores = std::thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(4);
     let hostname = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "windows-node".to_string());
+    let (storage_total_mb, storage_free_mb) = query_windows_storage_mb();
+    let cpu_usage_pct = query_windows_cpu_usage_pct();
     let (gpu_name, vram_total_mb, vram_free_mb, gpu_temp_c, gpu_usage_pct) =
         match probe_nvidia_gpu() {
             Some((name, tot, free, temp, util)) => (Some(name), tot, free, temp, util),
@@ -131,8 +183,10 @@ pub fn probe_windows_hardware() -> HostHardwareSnapshot {
         big_cores: (cpu_cores / 2).max(2),
         cpu_temp_c: 0.0,
         gpu_temp_c,
-        cpu_usage_pct: 0.0,
+        cpu_usage_pct,
         gpu_usage_pct,
+        storage_total_mb,
+        storage_free_mb,
         is_raspberry_pi: false,
         rpi_throttled_hex: None,
     }

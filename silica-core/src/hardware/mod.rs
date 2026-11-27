@@ -23,6 +23,8 @@ pub struct HostHardwareSnapshot {
     pub gpu_temp_c: f64,
     pub cpu_usage_pct: f64,
     pub gpu_usage_pct: f64,
+    pub storage_total_mb: f64,
+    pub storage_free_mb: f64,
     pub is_raspberry_pi: bool,
     pub rpi_throttled_hex: Option<String>,
 }
@@ -56,6 +58,8 @@ pub fn probe_real_host_hardware() -> HostHardwareSnapshot {
             gpu_temp_c: 0.0,
             cpu_usage_pct: 0.0,
             gpu_usage_pct: 0.0,
+            storage_total_mb: 0.0,
+            storage_free_mb: 0.0,
             is_raspberry_pi: false,
             rpi_throttled_hex: None,
         }

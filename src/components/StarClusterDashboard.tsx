@@ -17,9 +17,11 @@ import {
   EngineRuntimeStatus,
   GGUF_MODEL_PRESETS,
   GgufModelPreset,
+  LiveHardwareProbe,
   PlannedStarNode,
   StarClusterPlan,
 } from '../types/starCluster';
+import { ResourceWindow } from './ResourceWindow';
 
 
 interface StarClusterDashboardProps {
@@ -28,6 +30,7 @@ interface StarClusterDashboardProps {
   onSelectModel: (model: GgufModelPreset) => void;
   tuningAdvice?: ClusterTuningAdvice | null;
   plan: StarClusterPlan;
+  liveHardware?: LiveHardwareProbe;
   engineStatus?: EngineRuntimeStatus;
   onRescanDevices: () => void;
   onOpenModels: () => void;
@@ -44,6 +47,7 @@ export const StarClusterDashboard: React.FC<StarClusterDashboardProps> = ({
   onSelectModel,
   tuningAdvice: serverTuningAdvice,
   plan,
+  liveHardware,
   engineStatus,
   onRescanDevices,
   onOpenModels,
@@ -476,27 +480,7 @@ export const StarClusterDashboard: React.FC<StarClusterDashboardProps> = ({
                 </button>
               </div>
 
-              <div className="space-y-3 text-xs">
-                <div className="p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#0D1424] space-y-1">
-                  <p className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <Smartphone className="w-3.5 h-3.5 text-slate-500" />
-                    Android Phone / Tablet (USB-C)
-                  </p>
-                  <p className="text-slate-500 dark:text-slate-400">
-                    Plug in via USB-C cable with USB Debugging enabled. Silica Cluster auto-configures port forwarding in 2 seconds.
-                  </p>
-                </div>
-
-                <div className="p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-[#0D1424] space-y-1">
-                  <p className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <Laptop className="w-3.5 h-3.5 text-slate-500" />
-                    Another Computer (Wi-Fi or LAN)
-                  </p>
-                  <p className="text-slate-500 dark:text-slate-400">
-                    Open Silica Cluster on your other laptop on the same network or run the worker CLI. It joins automatically.
-                  </p>
-                </div>
-              </div>
+              <ResourceWindow hardware={liveHardware} plan={plan} />
 
             </div>
           </div>

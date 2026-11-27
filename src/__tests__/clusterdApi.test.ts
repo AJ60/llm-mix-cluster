@@ -94,12 +94,26 @@ describe('clusterd canonical HTTP API', () => {
     const listener: Server = net.createServer((socket) => {
       socket.on('error', () => {});
       let replied = false;
+      let pending = Buffer.alloc(0);
       socket.on('data', (chunk: Buffer) => {
-        if (replied || chunk.length < 32) return;
-        const nonce = decodeV10Request('clusterd-default-hmac-key', new Uint8Array(chunk.subarray(0, 32)));
-        if (!nonce) return;
-        replied = true;
-        socket.write(Buffer.from(encodeV10Reply('clusterd-default-hmac-key', nonce, 2048, 4, 0, 0)));
+        pending = Buffer.concat([pending, chunk]);
+        if (!replied) {
+          if (pending.length < 32) return;
+          const nonce = decodeV10Request('clusterd-default-hmac-key', new Uint8Array(pending.subarray(0, 32)));
+          if (!nonce) return;
+          replied = true;
+          socket.write(Buffer.from(encodeV10Reply('clusterd-default-hmac-key', nonce, 2048, 4, 0, 0)));
+          pending = pending.subarray(32);
+        }
+        while (pending.length >= 8 && pending.subarray(0, 4).toString('ascii') === 'BWPR') {
+          const length = pending.readUInt32LE(4);
+          if (pending.length < 8 + length) return;
+          const header = Buffer.alloc(8);
+          header.write('BWOK', 0, 'ascii');
+          header.writeUInt32LE(length, 4);
+          socket.write(Buffer.concat([header, pending.subarray(8, 8 + length)]));
+          pending = pending.subarray(8 + length);
+        }
       });
     });
     await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
@@ -127,8 +141,16 @@ describe('clusterd canonical HTTP API', () => {
       assert.ok(body.recommendedConfig, 'register response must carry Rust worker advice');
       assert.equal(typeof body.recommendedConfig.recommendedThreads, 'number');
       assert.equal(typeof body.recommendedConfig.adaptiveLoadFactor, 'number');
+      assert.ok(
+        body.snapshot.plan === null || typeof body.snapshot.plan.effectiveContext === 'number',
+        'plan must be null without a model or carry effective context'
+      );
       const hw = await (await fetch(`${harness.baseUrl}/api/cluster/hardware`)).json();
-      assert.ok(hw.connectedDevices.some((d: { id: string }) => d.id === 'node-test'));
+      const registered = hw.connectedDevices.find((d: { id: string }) => d.id === 'node-test');
+      assert.ok(registered);
+      assert.equal(typeof registered.bandwidthMbps, 'number');
+      assert.equal(typeof registered.storageTotalMb, 'number');
+      assert.equal(typeof registered.rttMs, 'number');
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
     }
