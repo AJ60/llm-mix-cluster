@@ -2,8 +2,8 @@
 //! Matches Android Kotlin `RpcService.computeClusterAuthToken` and `build32ByteGgufHandshake`.
 
 use std::io::{Read, Write};
-use std::path::Path;
 use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub const HANDSHAKE_CHALLENGE: &[u8] = b"GGUF_PROBE_V9";
@@ -79,7 +79,6 @@ pub fn compute_cluster_auth_token(secret: &str, challenge: &[u8]) -> [u8; 32] {
     out
 }
 
-
 pub const HANDSHAKE_CHALLENGE_V10: &[u8] = b"GGUF_PROBE_V10";
 pub const REPLY_CHALLENGE_V10: &[u8] = b"GGUF_REPLY_V10";
 pub const HANDSHAKE_MAGIC_V10: &[u8; 4] = b"NONC";
@@ -149,7 +148,9 @@ pub fn decode_v10_request(secret: &str, frame: &[u8; 32]) -> Option<V10Request> 
     for i in 12..32 {
         diff |= expected[i] ^ frame[i];
     }
-    if diff != 0 { return None; }
+    if diff != 0 {
+        return None;
+    }
     Some(V10Request { nonce })
 }
 
@@ -186,19 +187,36 @@ pub fn encode_v10_reply(
     out[0..4].copy_from_slice(b"GGUF");
     out[4..8].copy_from_slice(&HANDSHAKE_VERSION_V10.to_le_bytes());
     out[8..16].copy_from_slice(nonce);
-    out[16..24].copy_from_slice(&reply_mac(secret, nonce, safe_cap_mb, big_cores, flags, status));
+    out[16..24].copy_from_slice(&reply_mac(
+        secret,
+        nonce,
+        safe_cap_mb,
+        big_cores,
+        flags,
+        status,
+    ));
     out[24..28].copy_from_slice(&safe_cap_mb.to_le_bytes());
     let packed = (status as u32) | ((flags as u32) << 8) | ((big_cores as u32) << 24);
     out[28..32].copy_from_slice(&packed.to_le_bytes());
     out
 }
 
-pub fn verify_v10_reply(secret: &str, frame: &[u8; 32], expected_nonce: &[u8; 8]) -> Option<V10Reply> {
-    if &frame[0..4] != b"GGUF" { return None; }
-    if u32::from_le_bytes(frame[4..8].try_into().ok()?) != HANDSHAKE_VERSION_V10 { return None; }
+pub fn verify_v10_reply(
+    secret: &str,
+    frame: &[u8; 32],
+    expected_nonce: &[u8; 8],
+) -> Option<V10Reply> {
+    if &frame[0..4] != b"GGUF" {
+        return None;
+    }
+    if u32::from_le_bytes(frame[4..8].try_into().ok()?) != HANDSHAKE_VERSION_V10 {
+        return None;
+    }
     let mut nonce = [0u8; 8];
     nonce.copy_from_slice(&frame[8..16]);
-    if &nonce != expected_nonce { return None; }
+    if &nonce != expected_nonce {
+        return None;
+    }
     let safe_cap_mb = u32::from_le_bytes(frame[24..28].try_into().ok()?);
     let packed = u32::from_le_bytes(frame[28..32].try_into().ok()?);
     let status_bits = packed & 0xff;
@@ -220,7 +238,9 @@ pub fn verify_v10_reply(secret: &str, frame: &[u8; 32], expected_nonce: &[u8; 8]
     for i in 0..8 {
         diff |= expected_mac[i] ^ frame[i + 16];
     }
-    if diff != 0 { return None; }
+    if diff != 0 {
+        return None;
+    }
     Some(V10Reply {
         nonce,
         safe_cap_mb,
@@ -346,7 +366,6 @@ pub fn probe_worker_handshake(
     ))
 }
 
-
 pub fn probe_worker_bandwidth(
     addr: SocketAddr,
     secret: &str,
@@ -367,7 +386,9 @@ pub fn probe_worker_bandwidth(
     verify_v10_reply(secret, &reply, &nonce)
         .ok_or_else(|| "Worker replied with invalid v10 handshake frame".to_string())?;
 
-    let payload: Vec<u8> = (0..BANDWIDTH_PROBE_BYTES).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = (0..BANDWIDTH_PROBE_BYTES)
+        .map(|i| (i % 251) as u8)
+        .collect();
     let mut request = Vec::with_capacity(8 + payload.len());
     request.extend_from_slice(BANDWIDTH_REQUEST_MAGIC);
     request.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -444,39 +465,64 @@ mod tests {
         let token_a = compute_cluster_auth_token("clusterd-default-hmac-key", HANDSHAKE_CHALLENGE);
         let token_b = compute_cluster_auth_token("clusterd-default-hmac-key", HANDSHAKE_CHALLENGE);
         assert_eq!(token_a, token_b);
-        assert!(verify_cluster_auth_token("clusterd-default-hmac-key", &token_a));
+        assert!(verify_cluster_auth_token(
+            "clusterd-default-hmac-key",
+            &token_a
+        ));
         assert!(!verify_cluster_auth_token("wrong-secret", &token_a));
     }
-
 
     #[test]
     fn golden_v10_vectors_match_python_reference() {
         let path = Path::new("../tests/fixtures/handshake_v10_vectors.json");
         let raw = std::fs::read_to_string(path).expect("golden vector fixture");
         let doc: serde_json::Value = serde_json::from_str(&raw).expect("valid fixture");
-        for vector in doc.get("vectors").and_then(|v| v.as_array()).expect("vectors") {
+        for vector in doc
+            .get("vectors")
+            .and_then(|v| v.as_array())
+            .expect("vectors")
+        {
             let secret = vector["secret"].as_str().expect("secret");
             let nonce_hex = vector["nonce_hex"].as_str().expect("nonce");
             let nonce = hex_to_bytes(nonce_hex).expect("nonce bytes");
             let mut nonce_arr = [0u8; 8];
             nonce_arr.copy_from_slice(&nonce);
-            let request = hex_to_bytes(vector["request_hex"].as_str().expect("request")).expect("request bytes");
+            let request = hex_to_bytes(vector["request_hex"].as_str().expect("request"))
+                .expect("request bytes");
             let mut request_arr = [0u8; 32];
             request_arr.copy_from_slice(&request);
-            assert_eq!(decode_v10_request(secret, &request_arr).expect("valid request").nonce, nonce_arr);
+            assert_eq!(
+                decode_v10_request(secret, &request_arr)
+                    .expect("valid request")
+                    .nonce,
+                nonce_arr
+            );
             assert_eq!(encode_v10_request(secret, &nonce_arr)[..], request_arr[..]);
-            let reply = hex_to_bytes(vector["reply_hex"].as_str().expect("reply")).expect("reply bytes");
+            let reply =
+                hex_to_bytes(vector["reply_hex"].as_str().expect("reply")).expect("reply bytes");
             let mut reply_arr = [0u8; 32];
             reply_arr.copy_from_slice(&reply);
             let decoded = verify_v10_reply(secret, &reply_arr, &nonce_arr).expect("valid reply");
             assert_eq!(decoded.safe_cap_mb, 4096);
             assert_eq!(decoded.big_cores, 8);
-            assert_eq!(encode_v10_reply(secret, &nonce_arr, 4096, 8, decoded.flags as u16, decoded.status)[..], reply_arr[..]);
+            assert_eq!(
+                encode_v10_reply(
+                    secret,
+                    &nonce_arr,
+                    4096,
+                    8,
+                    decoded.flags as u16,
+                    decoded.status
+                )[..],
+                reply_arr[..]
+            );
         }
     }
 
     fn hex_to_bytes(value: &str) -> Option<Vec<u8>> {
-        if value.len() % 2 != 0 { return None; }
+        if value.len() % 2 != 0 {
+            return None;
+        }
         (0..value.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&value[i..i + 2], 16).ok())
@@ -491,7 +537,14 @@ mod tests {
         assert_eq!(decode_v10_request(secret, &request).unwrap().nonce, nonce);
         assert!(decode_v10_request("wrong-secret", &request).is_none());
 
-        let reply = encode_v10_reply(secret, &nonce, 4096, 8, FLAG_PLATFORM_ANDROID as u16, WorkerHandshakeStatus::Ready);
+        let reply = encode_v10_reply(
+            secret,
+            &nonce,
+            4096,
+            8,
+            FLAG_PLATFORM_ANDROID as u16,
+            WorkerHandshakeStatus::Ready,
+        );
         let decoded = verify_v10_reply(secret, &reply, &nonce).expect("valid reply");
         assert_eq!(decoded.safe_cap_mb, 4096);
         assert_eq!(decoded.big_cores, 8);
@@ -536,7 +589,9 @@ mod tests {
                 .expect("timeout");
             let mut request = [0u8; 32];
             stream.read_exact(&mut request).expect("read request");
-            let nonce = decode_v10_request(&server_secret, &request).expect("valid request").nonce;
+            let nonce = decode_v10_request(&server_secret, &request)
+                .expect("valid request")
+                .nonce;
             stream
                 .write_all(&encode_v10_reply(
                     &server_secret,
@@ -553,7 +608,9 @@ mod tests {
             let len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
             let mut payload = vec![0u8; len];
             stream.read_exact(&mut payload).expect("read payload");
-            stream.write_all(BANDWIDTH_REPLY_MAGIC).expect("write magic");
+            stream
+                .write_all(BANDWIDTH_REPLY_MAGIC)
+                .expect("write magic");
             stream
                 .write_all(&(len as u32).to_le_bytes())
                 .expect("write length");

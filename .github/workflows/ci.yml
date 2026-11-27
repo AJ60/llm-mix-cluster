@@ -56,6 +56,17 @@ jobs:
 
       - name: Setup Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path silica-core/Cargo.toml -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path silica-core/Cargo.toml --all-targets
+
+      - name: Verify v10 protocol vectors (Python)
+        run: python3 -m unittest tests.test_protocol_vectors -v
 
       - name: Build release clusterd binary & run Rust tests
         working-directory: silica-core

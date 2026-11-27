@@ -19,9 +19,17 @@ pub struct AdaptiveLoadFactor {
     pub reason: String,
 }
 
-pub fn calculate_adaptive_load_factor(temp_c: f64, headroom: f64, base_concurrency: u32) -> AdaptiveLoadFactor {
+pub fn calculate_adaptive_load_factor(
+    temp_c: f64,
+    headroom: f64,
+    base_concurrency: u32,
+) -> AdaptiveLoadFactor {
     let base = base_concurrency.max(1);
-    let effective = if temp_c > 0.0 && temp_c.is_finite() { temp_c } else { 34.0 };
+    let effective = if temp_c > 0.0 && temp_c.is_finite() {
+        temp_c
+    } else {
+        34.0
+    };
     let rounded = (effective * 10.0).round() / 10.0;
 
     if effective < TEMP_THRESHOLD_C {
@@ -31,7 +39,10 @@ pub fn calculate_adaptive_load_factor(temp_c: f64, headroom: f64, base_concurren
             capped: false,
             cap: base,
             band: "nominal",
-            reason: format!("Device {:.1}C < 40C - Adaptive Load Factor 1.00 (uncapped {} threads)", effective, base),
+            reason: format!(
+                "Device {:.1}C < 40C - Adaptive Load Factor 1.00 (uncapped {} threads)",
+                effective, base
+            ),
         };
     }
     if effective >= CRITICAL_THRESHOLD_C || (headroom >= 1.0 && effective >= HOT_THRESHOLD_C) {
@@ -41,7 +52,10 @@ pub fn calculate_adaptive_load_factor(temp_c: f64, headroom: f64, base_concurren
             capped: true,
             cap: 1,
             band: "critical_shed",
-            reason: format!("Critical heat {:.1}C (>=52C) - Adaptive Load Factor 0.00 (capped to 1 thread)", effective),
+            reason: format!(
+                "Critical heat {:.1}C (>=52C) - Adaptive Load Factor 0.00 (capped to 1 thread)",
+                effective
+            ),
         };
     }
     if effective > HOT_THRESHOLD_C {
@@ -73,7 +87,10 @@ pub fn calculate_adaptive_load_factor(temp_c: f64, headroom: f64, base_concurren
         capped: true,
         cap,
         band: "warm_cap",
-        reason: format!("Device {:.1}C >= 40C - Adaptive Load Factor {:.2} (concurrency capped {} -> {})", effective, factor, base, cap),
+        reason: format!(
+            "Device {:.1}C >= 40C - Adaptive Load Factor {:.2} (concurrency capped {} -> {})",
+            effective, factor, base, cap
+        ),
     }
 }
 
@@ -104,7 +121,11 @@ pub fn analyze(
     cfg: &ModelLoadConfig,
     nodes: &[LiveNodeInput],
 ) -> Value {
-    let plan_nodes = plan.get("nodes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let plan_nodes = plan
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let master_node = plan_nodes
         .iter()
         .find(|n| n.get("role").and_then(Value::as_str) == Some("Master"))
@@ -126,7 +147,11 @@ pub fn analyze(
     if (card.arch_mode == crate::gguf::ModelArchMode::Ternary || card.estimated_params_b >= 20.0)
         && cfg.context_length > 4096
     {
-        penalty += if master_vram_mb > 0.0 && master_vram_mb <= 4300.0 { 28 } else { 16 };
+        penalty += if master_vram_mb > 0.0 && master_vram_mb <= 4300.0 {
+            28
+        } else {
+            16
+        };
         patch.insert("contextLength".into(), json!(4096));
         push_item(
             &mut items,
@@ -147,7 +172,9 @@ pub fn analyze(
         .and_then(|n| n.get("osType"))
         .and_then(Value::as_str)
         .unwrap_or("linux");
-    let recommended_threads = master_cores.min(if master_os == "windows" { 12 } else { 16 }).max(2);
+    let recommended_threads = master_cores
+        .min(if master_os == "windows" { 12 } else { 16 })
+        .max(2);
     let cfg_threads = cfg.threads.unwrap_or(0);
     if cfg_threads == 0 || cfg_threads > master_cores * 3 / 2 || cfg_threads < 2 {
         penalty += 14;
@@ -163,7 +190,11 @@ pub fn analyze(
     }
 
     // 3. Ternary non-native flash attention / KV quant.
-    if card.arch_mode == crate::gguf::ModelArchMode::Ternary && !is_ternary && !cfg.flash_attn && master_vram_mb > 0.0 {
+    if card.arch_mode == crate::gguf::ModelArchMode::Ternary
+        && !is_ternary
+        && !cfg.flash_attn
+        && master_vram_mb > 0.0
+    {
         penalty += 22;
         patch.insert("enableFlashAttn".into(), json!(true));
         patch.insert("kvCacheQuant".into(), json!("q8_0"));
@@ -194,7 +225,10 @@ pub fn analyze(
                 );
             }
         }
-        if cfg.batch_size > 512 && (card.file_size_mb >= 8000.0 || card.arch_mode == crate::gguf::ModelArchMode::Ternary) {
+        if cfg.batch_size > 512
+            && (card.file_size_mb >= 8000.0
+                || card.arch_mode == crate::gguf::ModelArchMode::Ternary)
+        {
             penalty += 10;
             patch.insert("batchSize".into(), json!(512));
             patch.insert("ubatchSize".into(), json!(256));
@@ -213,7 +247,11 @@ pub fn analyze(
     let mut cluster_alf = 1.0f64;
     let mut worker_configs = serde_json::Map::new();
     for plan_node in &workers {
-        let node_id = plan_node.get("nodeId").and_then(Value::as_str).unwrap_or("").to_string();
+        let node_id = plan_node
+            .get("nodeId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let label = plan_node
             .get("label")
             .and_then(Value::as_str)
@@ -242,112 +280,145 @@ pub fn analyze(
         let over_hot = alf.effective_temp_c > HOT_THRESHOLD_C;
         let critical = alf.effective_temp_c >= CRITICAL_THRESHOLD_C;
         let allocated_layers = as_u32(plan_node.get("allocatedLayers"), 0);
-        let (recommended_threads, safe_ram_pct, context_tokens, load_scale, priority, prefer_gpu) = if is_android {
-            let policy_threads = if critical {
-                1
-            } else if over_hot {
-                if alf.effective_temp_c >= 50.0 { 1 } else { 2 }
-            } else {
-                match thermal_policy {
-                    "cooldown" => 2,
-                    "balanced" => base.saturating_sub(2).max(2),
-                    _ => base,
-                }
-            };
-            let threads = if alf.capped { policy_threads.min(alf.cap) } else { policy_threads };
-            let ram_pct = if as_u32(plan_node.get("totalRamMb"), 0) <= 2048 {
-                40
-            } else if critical {
-                25
-            } else if over_hot {
-                35
-            } else {
-                match thermal_policy {
-                    "cooldown" => 40,
-                    "balanced" => 35,
-                    _ => 50,
-                }
-            };
-            let ctx = if critical {
-                512
-            } else if over_hot {
-                1024
-            } else {
-                match thermal_policy {
-                    "cooldown" => 2048,
-                    "balanced" => 3072,
-                    _ => if as_u32(plan_node.get("totalRamMb"), 0) <= 3072 { 2048 } else { 4096 },
-                }
-            };
-            let policy_scale: f64 = if critical {
-                0.0
-            } else if over_hot {
-                if alf.effective_temp_c >= 50.0 { 0.25 } else { 0.5 }
-            } else {
-                match thermal_policy {
-                    "cooldown" => 0.7,
-                    "balanced" => 0.85,
-                    _ => 1.0,
-                }
-            };
-            let driver = plan_node
-                .get("backendDriver")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let gpu_ok = driver.contains("vulkan") && !driver.contains("neon") && !driver.contains("cpu");
-            (
-                threads,
-                ram_pct,
-                ctx,
-                (policy_scale.min(alf.factor) * 100.0).round() / 100.0,
-                if alf.effective_temp_c < 40.0 && thermal_policy == "performance" {
-                    "high"
-                } else if over_hot || thermal_policy == "cooldown" {
-                    "low"
+        let (recommended_threads, safe_ram_pct, context_tokens, load_scale, priority, prefer_gpu) =
+            if is_android {
+                let policy_threads = if critical {
+                    1
+                } else if over_hot {
+                    if alf.effective_temp_c >= 50.0 {
+                        1
+                    } else {
+                        2
+                    }
                 } else {
-                    "normal"
-                },
-                thermal_policy != "cooldown" && !over_hot && gpu_ok,
-            )
-        } else {
-            let threads = if alf.capped { base.min(alf.cap) } else { base };
-            let floor = if alf.band == "critical_shed" {
-                25.0
-            } else if alf.band == "hot_throttle" {
-                35.0
+                    match thermal_policy {
+                        "cooldown" => 2,
+                        "balanced" => base.saturating_sub(2).max(2),
+                        _ => base,
+                    }
+                };
+                let threads = if alf.capped {
+                    policy_threads.min(alf.cap)
+                } else {
+                    policy_threads
+                };
+                let ram_pct = if as_u32(plan_node.get("totalRamMb"), 0) <= 2048 {
+                    40
+                } else if critical {
+                    25
+                } else if over_hot {
+                    35
+                } else {
+                    match thermal_policy {
+                        "cooldown" => 40,
+                        "balanced" => 35,
+                        _ => 50,
+                    }
+                };
+                let ctx = if critical {
+                    512
+                } else if over_hot {
+                    1024
+                } else {
+                    match thermal_policy {
+                        "cooldown" => 2048,
+                        "balanced" => 3072,
+                        _ => {
+                            if as_u32(plan_node.get("totalRamMb"), 0) <= 3072 {
+                                2048
+                            } else {
+                                4096
+                            }
+                        }
+                    }
+                };
+                let policy_scale: f64 = if critical {
+                    0.0
+                } else if over_hot {
+                    if alf.effective_temp_c >= 50.0 {
+                        0.25
+                    } else {
+                        0.5
+                    }
+                } else {
+                    match thermal_policy {
+                        "cooldown" => 0.7,
+                        "balanced" => 0.85,
+                        _ => 1.0,
+                    }
+                };
+                let driver = plan_node
+                    .get("backendDriver")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let gpu_ok = driver.contains("vulkan")
+                    && !driver.contains("neon")
+                    && !driver.contains("cpu");
+                (
+                    threads,
+                    ram_pct,
+                    ctx,
+                    (policy_scale.min(alf.factor) * 100.0).round() / 100.0,
+                    if alf.effective_temp_c < 40.0 && thermal_policy == "performance" {
+                        "high"
+                    } else if over_hot || thermal_policy == "cooldown" {
+                        "low"
+                    } else {
+                        "normal"
+                    },
+                    thermal_policy != "cooldown" && !over_hot && gpu_ok,
+                )
             } else {
-                50.0
+                let threads = if alf.capped { base.min(alf.cap) } else { base };
+                let floor = if alf.band == "critical_shed" {
+                    25.0
+                } else if alf.band == "hot_throttle" {
+                    35.0
+                } else {
+                    50.0
+                };
+                let ram_pct = if alf.capped {
+                    (75.0 * alf.factor).round().max(floor) as u32
+                } else {
+                    75
+                };
+                let ctx = if alf.band == "hot_throttle" || alf.band == "critical_shed" {
+                    cfg.context_length.min(2048)
+                } else {
+                    cfg.context_length
+                };
+                (
+                    threads,
+                    ram_pct,
+                    ctx,
+                    alf.factor,
+                    if alf.capped { "low" } else { "normal" },
+                    as_f64(plan_node.get("vramTotalMb")) > 0.0 && alf.band != "critical_shed",
+                )
             };
-            let ram_pct = if alf.capped {
-                (75.0 * alf.factor).round().max(floor) as u32
-            } else {
-                75
-            };
-            let ctx = if alf.band == "hot_throttle" || alf.band == "critical_shed" {
-                cfg.context_length.min(2048)
-            } else {
-                cfg.context_length
-            };
-            (
-                threads,
-                ram_pct,
-                ctx,
-                alf.factor,
-                if alf.capped { "low" } else { "normal" },
-                as_f64(plan_node.get("vramTotalMb")) > 0.0 && alf.band != "critical_shed",
-            )
-        };
 
         if alf.capped {
-            penalty += if over_hot { 14 } else if is_android { 6 } else { 5 };
+            penalty += if over_hot {
+                14
+            } else if is_android {
+                6
+            } else {
+                5
+            };
             push_item(
                 &mut items,
                 &format!("adaptive-load-cap-{}", node_id),
                 if over_hot { "critical" } else { "warning" },
-                format!("{} Adaptive Load Factor {:.2} ({:.1}C >= 40C)", label, alf.factor, alf.effective_temp_c),
+                format!(
+                    "{} Adaptive Load Factor {:.2} ({:.1}C >= 40C)",
+                    label, alf.factor, alf.effective_temp_c
+                ),
                 alf.reason.clone(),
-                &format!("Caps worker concurrency to {}/{} threads", recommended_threads, base),
+                &format!(
+                    "Caps worker concurrency to {}/{} threads",
+                    recommended_threads, base
+                ),
             );
         } else if allocated_layers == 0 && !over_hot {
             penalty += 15;
@@ -356,7 +427,10 @@ pub fn analyze(
                 &format!("worker-idle-{}", node_id),
                 "warning",
                 format!("{} has 0L active in RAM Residency", label),
-                format!("Worker is connected but idle; auto-config can assign layers and {} threads.", recommended_threads),
+                format!(
+                    "Worker is connected but idle; auto-config can assign layers and {} threads.",
+                    recommended_threads
+                ),
                 "Activates phone compute",
             );
         }
@@ -409,10 +483,16 @@ pub fn analyze(
     let summary = if has_actionable {
         format!(
             "Detected {} tuning bottleneck(s) - apply Auto-Tune to boost tok/s and cut TTFT.",
-            items.iter().filter(|i| i.get("severity").and_then(Value::as_str) != Some("optimal")).count()
+            items
+                .iter()
+                .filter(|i| i.get("severity").and_then(Value::as_str) != Some("optimal"))
+                .count()
         )
     } else if cluster_alf < 1.0 {
-        format!("Adaptive Load Factor {:.2} active - capping warm worker concurrency above 40C.", cluster_alf)
+        format!(
+            "Adaptive Load Factor {:.2} active - capping warm worker concurrency above 40C.",
+            cluster_alf
+        )
     } else {
         "All VRAM, thread, context, and worker thermal parameters are tuned cleanly.".to_string()
     };

@@ -40,15 +40,15 @@ class TestClusterNodeEndToEnd(unittest.TestCase):
         cls.harness.stop()
 
     def test_01_end_to_end_rpc_handshake_and_multi_vm_gguf_sharding(self):
-        # 1. Verify live TCP 32-byte keyed GGUF/RPC v9 handshake on both Alpine VMs
+        # 1. Verify live TCP 32-byte keyed GGUF/RPC v10 handshake on both Alpine VMs
         for ep in (self.harness.worker_1, self.harness.worker_2):
             ok, frame, _ = probe_tcp_rpc_handshake(
                 ep.host, ep.port, self.harness.cluster_secret
             )
             self.assertTrue(ok)
             assert frame is not None
-            self.assertEqual(frame["rpc_version"], 9)
-            self.assertEqual(frame["version_tag"], "v1.0.0")
+            self.assertEqual(frame["rpc_version"], 10)
+            self.assertEqual(frame["status"], "READY")
 
             st, reg = self.harness.register_worker(ep)
             self.assertEqual(st, 200)

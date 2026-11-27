@@ -203,7 +203,10 @@ fn ggml_type_bytes_per_elem(t: u32) -> (f64, &'static str) {
         34 => (54.0 / 256.0, "TQ1_0"),
         35 => (66.0 / 256.0, "TQ2_0"),
         other => {
-            tracing::warn!("Unknown GGML tensor type {} — using conservative 0.5625 B/element estimate", other);
+            tracing::warn!(
+                "Unknown GGML tensor type {} — using conservative 0.5625 B/element estimate",
+                other
+            );
             (0.5625, "Q4_K_M")
         }
     }
@@ -378,11 +381,16 @@ pub fn inspect_gguf_file(
     let context_length = get_u32(&format!("{}.context_length", arch)).unwrap_or(8192);
     let has_chat_template = kv_map.contains_key("tokenizer.chat_template");
     let has_native_mtp = get_u32(&format!("{}.nextn_predict_layers", arch)).unwrap_or(0) > 0
-        || kv_map.keys().any(|k| k.contains("nextn") || k.contains("mtp"));
+        || kv_map
+            .keys()
+            .any(|k| k.contains("nextn") || k.contains("mtp"));
 
     let (vocab_size, vocab_hash) = match kv_map.get("tokenizer.ggml.tokens") {
         Some(GgufValue::ArraySummary { len, hash }) => (*len as u32, format!("{:016x}", hash)),
-        _ => (32000, format!("{:016x}", fnv1a_update(0xcbf29ce484222325, arch.as_bytes()))),
+        _ => (
+            32000,
+            format!("{:016x}", fnv1a_update(0xcbf29ce484222325, arch.as_bytes())),
+        ),
     };
 
     let mut quant_label = get_u32("general.file_type")
@@ -444,13 +452,14 @@ pub fn inspect_gguf_file(
         master_pinned_bytes += tensor_bytes;
     }
 
-    let arch_mode = if saw_ternary_tensor || quant_label.starts_with("TQ") || arch.contains("bitnet") {
-        ModelArchMode::Ternary
-    } else if expert_count > 1 {
-        ModelArchMode::MoE
-    } else {
-        ModelArchMode::Dense
-    };
+    let arch_mode =
+        if saw_ternary_tensor || quant_label.starts_with("TQ") || arch.contains("bitnet") {
+            ModelArchMode::Ternary
+        } else if expert_count > 1 {
+            ModelArchMode::MoE
+        } else {
+            ModelArchMode::Dense
+        };
 
     let (mmproj_path, mmproj_size_mb) = match find_companion_mmproj(path) {
         Some((p, mb)) => (Some(p.to_string_lossy().into_owned()), mb),
@@ -470,18 +479,20 @@ pub fn inspect_gguf_file(
 
     let fallback_layer_mb = (file_size_mb * 0.90) / block_count as f64;
     let mut per_layer_profiles = Vec::with_capacity(block_count as usize);
-    let exact_tensor_table = kv_count <= 4096 && tensor_count <= 32768 && parsed_tensors == tensor_count;
+    let exact_tensor_table =
+        kv_count <= 4096 && tensor_count <= 32768 && parsed_tensors == tensor_count;
     for i in 0..block_count as usize {
-        let (attn_mb, ffn_mb) = if exact_tensor_table && (layer_attn_bytes[i] + layer_ffn_bytes[i]) > 0.0 {
-            (
-                layer_attn_bytes[i] / (1024.0 * 1024.0),
-                layer_ffn_bytes[i] / (1024.0 * 1024.0),
-            )
-        } else if arch_mode == ModelArchMode::MoE {
-            (fallback_layer_mb * 0.18, fallback_layer_mb * 0.82)
-        } else {
-            (fallback_layer_mb * 0.34, fallback_layer_mb * 0.66)
-        };
+        let (attn_mb, ffn_mb) =
+            if exact_tensor_table && (layer_attn_bytes[i] + layer_ffn_bytes[i]) > 0.0 {
+                (
+                    layer_attn_bytes[i] / (1024.0 * 1024.0),
+                    layer_ffn_bytes[i] / (1024.0 * 1024.0),
+                )
+            } else if arch_mode == ModelArchMode::MoE {
+                (fallback_layer_mb * 0.18, fallback_layer_mb * 0.82)
+            } else {
+                (fallback_layer_mb * 0.34, fallback_layer_mb * 0.66)
+            };
         per_layer_profiles.push(LayerFootprint {
             layer_index: i as u32,
             attention_weight_mb: attn_mb,
@@ -556,7 +567,7 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"GGUF");
         buf.extend_from_slice(&3u32.to_le_bytes()); // v3
-        // 3 tensors: token_embd + blk.0.attn_q + blk.0.ffn_gate_exps
+                                                    // 3 tensors: token_embd + blk.0.attn_q + blk.0.ffn_gate_exps
         buf.extend_from_slice(&3u64.to_le_bytes());
         let kv_count: u64 = if experts > 0 { 8 } else { 7 };
         buf.extend_from_slice(&kv_count.to_le_bytes());
@@ -589,7 +600,10 @@ mod tests {
         // 6. chat_template
         write_gguf_str(&mut buf, "tokenizer.chat_template");
         buf.extend_from_slice(&8u32.to_le_bytes());
-        write_gguf_str(&mut buf, "{% for m in messages %}{{ m.content }}{% endfor %}");
+        write_gguf_str(
+            &mut buf,
+            "{% for m in messages %}{{ m.content }}{% endfor %}",
+        );
 
         // 7. tokenizer.ggml.tokens
         write_gguf_str(&mut buf, "tokenizer.ggml.tokens");
@@ -631,8 +645,14 @@ mod tests {
         let model_path = dir.join("qwen3-vl-30b-q4_k_m.gguf");
         let mmproj_path = dir.join("qwen3-mmproj-f16.gguf");
         let bytes = build_synthetic_gguf("qwen3moe", 48, 128, 12, &["<bos>", "hello", "world"]);
-        fs::File::create(&model_path).unwrap().write_all(&bytes).unwrap();
-        fs::File::create(&mmproj_path).unwrap().write_all(&vec![0u8; 2 * 1024 * 1024]).unwrap();
+        fs::File::create(&model_path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+        fs::File::create(&mmproj_path)
+            .unwrap()
+            .write_all(&vec![0u8; 2 * 1024 * 1024])
+            .unwrap();
 
         let card = inspect_gguf_file(&model_path, 32768, "q8_0").expect("should parse GGUF");
         assert_eq!(card.architecture, "qwen3moe");
@@ -645,7 +665,10 @@ mod tests {
         assert!(card.mmproj_size_mb >= 1.9);
         assert!(card.master_pinned_overhead_mb > card.mmproj_size_mb);
         assert_eq!(card.per_layer_profiles.len(), 48);
-        assert!(card.per_layer_profiles[0].ffn_or_expert_weight_mb > card.per_layer_profiles[0].attention_weight_mb);
+        assert!(
+            card.per_layer_profiles[0].ffn_or_expert_weight_mb
+                > card.per_layer_profiles[0].attention_weight_mb
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -679,8 +702,16 @@ mod tests {
 
         let p1 = dir.join("bitnet-tq1.gguf");
         let p2 = dir.join("bitnet-other-vocab.gguf");
-        fs::write(&p1, build_synthetic_gguf("bitnet", 36, 0, 34, &["a", "b", "c"])).unwrap();
-        fs::write(&p2, build_synthetic_gguf("bitnet", 36, 0, 34, &["x", "y", "z"])).unwrap();
+        fs::write(
+            &p1,
+            build_synthetic_gguf("bitnet", 36, 0, 34, &["a", "b", "c"]),
+        )
+        .unwrap();
+        fs::write(
+            &p2,
+            build_synthetic_gguf("bitnet", 36, 0, 34, &["x", "y", "z"]),
+        )
+        .unwrap();
 
         let c1 = inspect_gguf_file(&p1, 8192, "f16").unwrap();
         let c2 = inspect_gguf_file(&p2, 8192, "f16").unwrap();

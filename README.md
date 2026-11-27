@@ -1,6 +1,6 @@
-# ClusterLab — 1-Hop Star GGUF Cluster (React + TypeScript + Express + Vite)
+# ClusterLab — Rust `clusterd` GGUF Cluster (React + TypeScript + Vite)
 
-ClusterLab is a simplified **1-Hop Star GGUF Cluster** coordinator, Hugging Face GGUF browser, live OpenAI-compatible inference server, and node-brain inspector built with React 19, TypeScript, Express, Vite, and Tailwind CSS v4.
+ClusterLab is a simplified **1-Hop Star GGUF Cluster** coordinator, Hugging Face GGUF browser, live OpenAI-compatible inference server, and node-brain inspector built with React 19/TypeScript on a pure-Rust `clusterd` engine, Vite, and Tailwind CSS v4.
 
 The default interface centers on clean cluster orchestration, Windows/Linux backend tuning, model compatibility cards, chat + active-parameter inspection, and 1-step agent harness setup. Advanced 2D machine learning visualization (**2D K-Means & DBSCAN Lab**) remains gated behind **Developer Mode**.
 
@@ -38,7 +38,7 @@ The default interface centers on clean cluster orchestration, Windows/Linux back
 # 1. Install dependencies
 npm install
 
-# 2. Start Express + Vite development environment with live HMR
+# 2. Build the client and start the Rust master (Vite HMR is disabled)
 npm run dev      # builds client then runs Rust clusterd: http://localhost:3000
 
 # 3. Run static type checking
@@ -48,7 +48,7 @@ npm run lint     # tsc --noEmit
 npm test         # 43 tests covering planners, tuners, catalogs & the live clusterd API
 
 # 5. Build production bundle (client assets + standalone server bundle)
-npm run build    # Compiles client to dist/ and server to dist/server.js
+npm run build    # Client only; Rust embeds dist/ at compile time
 
 # 6. Run production server (release binary)
 npm start        # builds client and runs `clusterd --release` on port 3000 (or $PORT)
@@ -105,7 +105,7 @@ ClusterLab includes an end-to-end multi-VM simulation and fault-injection verifi
 3. **Wi-Fi 5 / 802.11ac (Windows / Edge Worker VM)**:
    - Tests wireless edge nodes with realistic latency ($14.8\text{ ms}$) and jitter.
    - **Dynamic Jitter Auto-Pruning:** When Wi-Fi links experience interference ($>40\text{ ms}$ RTT or $>1.5\%$ packet loss), the cluster auto-planner automatically prunes the slow wireless node and consolidates layers onto the low-latency Ethernet and USB tiers to protect generation throughput.
-4. **Keyed 32-Byte RPC v9 Handshake (`GGUF_PROBE_V9`)**:
+4. **Keyed 32-Byte RPC v10 Handshake (`GGUF_PROBE_V10`)**:
    - Master and workers authenticate over raw TCP using 32-byte keyed auth frames. Rogue or unauthenticated nodes are rejected with `HTTP 502 Bad Gateway`.
 5. **SSRF Guard & Internal IP Isolation**:
    - Strict SSRF guards on `/api/tools/fetch-url` reject loopback, RFC1918 private subnets, and cloud metadata IPs (`169.254.169.254`).
@@ -146,6 +146,8 @@ ClusterLab is fully compliant with 12-factor cloud deployment:
 | `NODE_ENV` | Environment mode (`development`, `production`, `test`) | `production` |
 | `UPSTREAM_LLAMA_URL` | Optional upstream `llama-server` / `clusterd` OpenAI endpoint | `""` |
 | `VITE_APP_NAME` | Public client application title | `ClusterLab` |
+| `CLUSTER_SECRET` | v10 handshake HMAC secret | `clusterd-default-hmac-key` |
+| `CLUSTER_API_TOKEN` | Bearer token required for non-loopback binds | unset |
 
 ---
 

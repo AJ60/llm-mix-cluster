@@ -8,12 +8,12 @@ use std::os::windows::io::AsRawHandle;
 use std::process::{Child, Command};
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
-use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::GetSystemTimes;
 
@@ -95,7 +95,11 @@ fn probe_nvidia_gpu() -> Option<(String, f64, f64, f64, f64)> {
     if !out.status.success() {
         return None;
     }
-    let line = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+    let line = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
     let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
     if parts.len() < 5 {
         return None;
@@ -108,7 +112,6 @@ fn probe_nvidia_gpu() -> Option<(String, f64, f64, f64, f64)> {
         parts[4].parse::<f64>().unwrap_or(0.0),
     ))
 }
-
 
 fn filetime_ticks(value: &FILETIME) -> u64 {
     ((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64
@@ -148,7 +151,13 @@ fn query_windows_storage_mb() -> (f64, f64) {
         let mut free_available = 0u64;
         let mut total_bytes = 0u64;
         let mut total_free = 0u64;
-        if GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_available, &mut total_bytes, &mut total_free) == 0 {
+        if GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_available,
+            &mut total_bytes,
+            &mut total_free,
+        ) == 0
+        {
             return (0.0, 0.0);
         }
         let mb = 1024.0 * 1024.0;

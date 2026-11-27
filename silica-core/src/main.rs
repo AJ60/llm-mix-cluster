@@ -32,8 +32,8 @@ use axum::{
     Json, Router,
 };
 use discovery::{
-    discover_master_udp, setup_adb_usb_tunnels, spawn_udp_discovery_responder, WorkerRegisterRequest,
-    WorkerRegistry,
+    discover_master_udp, setup_adb_usb_tunnels, spawn_udp_discovery_responder,
+    WorkerRegisterRequest, WorkerRegistry,
 };
 use engine::EngineSupervisor;
 use futures_util::StreamExt;
@@ -140,7 +140,6 @@ async fn beacon_handler(State(state): State<AppState>) -> impl IntoResponse {
         "handshakeVersion": 10,
     }))
 }
-
 
 async fn cached_hardware(state: &AppState) -> hardware::HostHardwareSnapshot {
     let now = std::time::Instant::now();
@@ -251,26 +250,44 @@ async fn register_worker_handler(
                 .get("plan")
                 .and_then(|p| p.get("nodes"))
                 .and_then(|n| n.as_array())
-                .and_then(|nodes| nodes.iter().find(|n| n.get("nodeId").and_then(|v| v.as_str()) == Some(node.node_id.as_str())));
-            let allocated_layers = assigned.and_then(|n| n.get("allocatedLayers")).cloned().unwrap_or(serde_json::json!(0));
-            let layer_start = assigned.and_then(|n| n.get("layerStart")).cloned().unwrap_or(serde_json::json!(0));
-            let layer_end = assigned.and_then(|n| n.get("layerEnd")).cloned().unwrap_or(serde_json::json!(0));
-            let allocated_mb = assigned.and_then(|n| n.get("allocatedMb")).cloned().unwrap_or(serde_json::json!(0));
+                .and_then(|nodes| {
+                    nodes.iter().find(|n| {
+                        n.get("nodeId").and_then(|v| v.as_str()) == Some(node.node_id.as_str())
+                    })
+                });
+            let allocated_layers = assigned
+                .and_then(|n| n.get("allocatedLayers"))
+                .cloned()
+                .unwrap_or(serde_json::json!(0));
+            let layer_start = assigned
+                .and_then(|n| n.get("layerStart"))
+                .cloned()
+                .unwrap_or(serde_json::json!(0));
+            let layer_end = assigned
+                .and_then(|n| n.get("layerEnd"))
+                .cloned()
+                .unwrap_or(serde_json::json!(0));
+            let allocated_mb = assigned
+                .and_then(|n| n.get("allocatedMb"))
+                .cloned()
+                .unwrap_or(serde_json::json!(0));
             let recommended_config = snapshot
                 .get("tuningAdvice")
                 .and_then(|a| a.get("workerConfigs"))
                 .and_then(|configs| configs.get(node.node_id.as_str()))
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!({
-                    "nodeId": node.node_id,
-                    "recommendedThreads": node.big_cores.max(1),
-                    "recommendedSafeRamPct": 50,
-                    "recommendedContextTokens": 4096,
-                    "concurrencyCapped": false,
-                    "concurrencyCap": node.big_cores.max(1),
-                    "adaptiveLoadFactor": 1.0,
-                    "thermalPolicy": "performance"
-                }));
+                .unwrap_or_else(|| {
+                    serde_json::json!({
+                        "nodeId": node.node_id,
+                        "recommendedThreads": node.big_cores.max(1),
+                        "recommendedSafeRamPct": 50,
+                        "recommendedContextTokens": 4096,
+                        "concurrencyCapped": false,
+                        "concurrencyCap": node.big_cores.max(1),
+                        "adaptiveLoadFactor": 1.0,
+                        "thermalPolicy": "performance"
+                    })
+                });
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -314,10 +331,13 @@ async fn inspect_gguf_handler(
         Ok(card) => {
             let model = model_card_to_preset(&card);
             *state.active_card.write().await = Some(card.clone());
-            (StatusCode::OK, Json(serde_json::json!({
-                "ok": true, "model": model, "modelCard": card,
-                "architecture": format!("{:?}", card.arch_mode), "layers": card.block_count
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true, "model": model, "modelCard": card,
+                    "architecture": format!("{:?}", card.arch_mode), "layers": card.block_count
+                })),
+            )
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -383,7 +403,9 @@ async fn reload_model_handler(
                 Err(e) => {
                     return (
                         StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({ "ok": false, "error": format!("Draft GGUF inspect failed: {}", e) })),
+                        Json(
+                            serde_json::json!({ "ok": false, "error": format!("Draft GGUF inspect failed: {}", e) }),
+                        ),
                     );
                 }
             }
@@ -433,7 +455,8 @@ async fn reload_model_handler(
     *state.active_card.write().await = Some(card.clone());
     *state.load_config.write().await = cfg;
 
-    let binary = std::env::var("SILICA_LLAMA_SERVER_BINARY").unwrap_or_else(|_| "llama-server".to_string());
+    let binary =
+        std::env::var("SILICA_LLAMA_SERVER_BINARY").unwrap_or_else(|_| "llama-server".to_string());
     match state
         .engine
         .hot_reload_llama_server(
@@ -575,8 +598,8 @@ async fn chat_completions_handler(
         };
         return match req_builder.send().await {
             Ok(resp) => {
-                let code = StatusCode::from_u16(resp.status().as_u16())
-                    .unwrap_or(StatusCode::BAD_GATEWAY);
+                let code =
+                    StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 let body = resp.text().await.unwrap_or_default();
                 (code, [(header::CONTENT_TYPE, "application/json")], body).into_response()
             }
@@ -691,7 +714,9 @@ async fn static_asset_handler(request: Request) -> Response {
     }
     let key = if path.is_empty() { "index.html" } else { path };
 
-    if let Some(asset) = EmbeddedWebAssets::get(key).or_else(|| EmbeddedWebAssets::get("index.html")) {
+    if let Some(asset) =
+        EmbeddedWebAssets::get(key).or_else(|| EmbeddedWebAssets::get("index.html"))
+    {
         let mime = mime_guess::from_path(key).first_or_octet_stream();
         return (
             StatusCode::OK,
@@ -707,7 +732,6 @@ async fn static_asset_handler(request: Request) -> Response {
     )
         .into_response()
 }
-
 
 fn model_card_to_preset(card: &GgufModelCard) -> serde_json::Value {
     let arch = match card.arch_mode {
@@ -779,7 +803,6 @@ async fn collect_nodes(state: &AppState) -> Vec<LiveNodeInput> {
     }
     nodes
 }
-
 
 fn thermal_ui(state: planner::ThermalState) -> serde_json::Value {
     let (label, scale) = match state {
@@ -884,7 +907,10 @@ fn plan_to_ui(
             })
         })
         .collect::<Vec<_>>();
-    let node_sum: f64 = node_values.iter().map(|n| n["allocatedMb"].as_f64().unwrap_or(0.0)).sum();
+    let node_sum: f64 = node_values
+        .iter()
+        .map(|n| n["allocatedMb"].as_f64().unwrap_or(0.0))
+        .sum();
     let coverage = if plan.total_model_need_mb > 0.0 {
         (node_sum / plan.total_model_need_mb * 100.0).min(100.0)
     } else {
@@ -903,8 +929,22 @@ fn plan_to_ui(
         .max()
         .unwrap_or(0);
     let overall_thermal = ["COOL", "WARN", "SHED_25", "EMERGENCY_OFFLOAD"][worst_thermal as usize];
-    let tier_code = if coverage >= 99.0 { "S" } else if coverage >= 75.0 { "A" } else if coverage >= 40.0 { "B" } else { "C" };
-    let fit_verdict = if coverage >= 99.0 { "Fast" } else if coverage >= 60.0 { "Best Fit" } else { "Streaming" };
+    let tier_code = if coverage >= 99.0 {
+        "S"
+    } else if coverage >= 75.0 {
+        "A"
+    } else if coverage >= 40.0 {
+        "B"
+    } else {
+        "C"
+    };
+    let fit_verdict = if coverage >= 99.0 {
+        "Fast"
+    } else if coverage >= 60.0 {
+        "Best Fit"
+    } else {
+        "Streaming"
+    };
     serde_json::json!({
         "tierCode": tier_code,
         "tierLabel": format!("Rust clusterd plan ({:.0}%)", coverage),
@@ -952,7 +992,13 @@ async fn build_snapshot(state: &AppState) -> serde_json::Value {
     });
     if let Some(ref card) = card {
         let profile_key = format!("{}:{}nodes", card.architecture, nodes.len());
-        let learned = state.history.read().await.profiles.get(&profile_key).cloned();
+        let learned = state
+            .history
+            .read()
+            .await
+            .profiles
+            .get(&profile_key)
+            .cloned();
         learned_profile = learned
             .as_ref()
             .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
@@ -998,11 +1044,18 @@ async fn cluster_state_post_handler(
             state.engine.set_external_upstream(None, None).await;
         } else {
             match tools::validate_public_http_url(&value) {
-                Ok(valid) => state.engine.set_external_upstream(Some(valid.to_string()), None).await,
+                Ok(valid) => {
+                    state
+                        .engine
+                        .set_external_upstream(Some(valid.to_string()), None)
+                        .await
+                }
                 Err(e) => {
                     return (
                         StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({ "ok": false, "error": format!("Invalid upstream URL: {}", e) })),
+                        Json(
+                            serde_json::json!({ "ok": false, "error": format!("Invalid upstream URL: {}", e) }),
+                        ),
                     );
                 }
             }
@@ -1016,7 +1069,12 @@ async fn models_list_handler(State(state): State<AppState>) -> impl IntoResponse
         Some(card) => vec![model_card_to_preset(card)],
         None => Vec::new(),
     };
-    let active_id = state.active_card.read().await.as_ref().map(|c| c.basename.clone());
+    let active_id = state
+        .active_card
+        .read()
+        .await
+        .as_ref()
+        .map(|c| c.basename.clone());
     Json(serde_json::json!({ "models": models, "activeId": active_id }))
 }
 
@@ -1036,7 +1094,10 @@ async fn local_models_handler(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let dir = params.get("dir").cloned().unwrap_or_else(|| "./models".to_string());
+    let dir = params
+        .get("dir")
+        .cloned()
+        .unwrap_or_else(|| "./models".to_string());
     let expanded = if let Some(rest) = dir.strip_prefix("~/") {
         match std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
             Ok(home) => format!("{}/{}", home.trim_end_matches(['/', '\\']), rest),
@@ -1082,7 +1143,10 @@ async fn models_activate_handler(
             let defaults = ModelLoadConfig::for_card(&card);
             *state.load_config.write().await = defaults;
             *state.active_card.write().await = Some(card);
-            (StatusCode::OK, Json(serde_json::json!({ "ok": true, "snapshot": build_snapshot(&state).await })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "ok": true, "snapshot": build_snapshot(&state).await })),
+            )
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -1095,7 +1159,9 @@ async fn engine_stop_handler(State(state): State<AppState>) -> impl IntoResponse
     match state.engine.stop().await {
         Ok(status) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "ok": true, "status": status, "snapshot": build_snapshot(&state).await })),
+            Json(
+                serde_json::json!({ "ok": true, "status": status, "snapshot": build_snapshot(&state).await }),
+            ),
         ),
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1108,10 +1174,18 @@ async fn backends_script_handler(State(state): State<AppState>) -> impl IntoResp
     let cfg = state.load_config.read().await.clone();
     let card = state.active_card.read().await.clone();
     let plan = match card.as_ref() {
-        Some(card) => Some(compute_cluster_plan(card, &collect_nodes(&state).await, &cfg, None)),
+        Some(card) => Some(compute_cluster_plan(
+            card,
+            &collect_nodes(&state).await,
+            &cfg,
+            None,
+        )),
         None => None,
     };
-    let args = plan.as_ref().map(|p| p.cli_args.clone()).unwrap_or_default();
+    let args = plan
+        .as_ref()
+        .map(|p| p.cli_args.clone())
+        .unwrap_or_default();
     let script = format!(
         "#!/usr/bin/env bash\nset -euo pipefail\n# Silica Cluster tuned backend\n./llama-server {}\n",
         args.join(" ")
@@ -1125,7 +1199,6 @@ async fn backends_script_handler(State(state): State<AppState>) -> impl IntoResp
     }))
 }
 
-
 async fn hf_models_handler(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -1138,7 +1211,12 @@ async fn hf_models_handler(
             format!("&search={}", urlencoding(&query))
         }
     );
-    let response = match state_http_client().get(&url).timeout(Duration::from_secs(8)).send().await {
+    let response = match state_http_client()
+        .get(&url)
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             return Json(serde_json::json!({ "models": [], "error": e.to_string() }));
@@ -1148,19 +1226,29 @@ async fn hf_models_handler(
     let models: Vec<serde_json::Value> = raw
         .into_iter()
         .map(|m| {
-            let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = m
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let name = id.rsplit('/').next().unwrap_or(&id).to_string();
             let params_b = infer_params_from_name(&name);
             let layers = infer_layers_from_name(&name, params_b);
             let lower = name.to_ascii_lowercase();
-            let (architecture, active_ratio) = if lower.contains("bitnet") || lower.contains("tq1") || lower.contains("ternary") {
-                ("Ternary", 1.0)
-            } else if lower.contains("moe") || lower.contains("mixtral") || lower.contains("a3b") ||
-                lower.contains("a8b") || lower.contains("a22b") || lower.contains("deepseek") {
-                ("MoE", 0.12)
-            } else {
-                ("Dense", 1.0)
-            };
+            let (architecture, active_ratio) =
+                if lower.contains("bitnet") || lower.contains("tq1") || lower.contains("ternary") {
+                    ("Ternary", 1.0)
+                } else if lower.contains("moe")
+                    || lower.contains("mixtral")
+                    || lower.contains("a3b")
+                    || lower.contains("a8b")
+                    || lower.contains("a22b")
+                    || lower.contains("deepseek")
+                {
+                    ("MoE", 0.12)
+                } else {
+                    ("Dense", 1.0)
+                };
             serde_json::json!({
                 "id": id,
                 "hfRepo": id,
@@ -1197,7 +1285,9 @@ fn urlencoding(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
             _ => out.push_str(&format!("%{:02X}", byte)),
         }
     }
@@ -1206,11 +1296,17 @@ fn urlencoding(value: &str) -> String {
 
 fn infer_params_from_name(name: &str) -> f64 {
     let lower = name.to_ascii_lowercase();
-    let digits: String = lower.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+    let digits: String = lower
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
     let b_pos = lower.find('b').unwrap_or(0);
     if b_pos > 0 {
         let prefix = &lower[..b_pos];
-        let nums: String = prefix.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+        let nums: String = prefix
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
         if let Ok(v) = nums.parse::<f64>() {
             if v >= 0.1 && v <= 1000.0 {
                 return v;
@@ -1228,14 +1324,24 @@ fn infer_layers_from_name(name: &str, params_b: f64) -> u32 {
             return 64;
         }
     }
-    if params_b >= 30.0 { 64 } else if params_b >= 10.0 { 48 } else { 32 }
+    if params_b >= 30.0 {
+        64
+    } else if params_b >= 10.0 {
+        48
+    } else {
+        32
+    }
 }
 
 async fn tools_cluster_status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let eng = state.engine.status().await;
     let workers = state.registry.active_verified_workers().await;
     let card = state.active_card.read().await.clone();
-    let throughput = if eng.running { "Rust planner active" } else { "engine offline" };
+    let throughput = if eng.running {
+        "Rust planner active"
+    } else {
+        "engine offline"
+    };
     Json(serde_json::json!({
         "ok": true,
         "activeWorkers": workers.len(),
@@ -1253,18 +1359,33 @@ async fn tools_cluster_status_handler(State(state): State<AppState>) -> impl Int
 }
 
 async fn tools_web_search_handler(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
-    let query = payload.get("query").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let query = payload
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     if query.is_empty() || query.len() > 300 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": "Provide a search query" })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "Provide a search query" })),
+        );
     }
     let url = format!(
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         urlencoding(query)
     );
-    let resp = match state_http_client().get(&url).timeout(Duration::from_secs(6)).send().await {
+    let resp = match state_http_client()
+        .get(&url)
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
-            return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "ok": false, "error": e.to_string() })));
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+            );
         }
     };
     let data: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::json!({}));
@@ -1353,7 +1474,6 @@ async fn tuning_auto_apply_handler(
     }))
 }
 
-
 async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
     if let Some(expected) = state.api_token {
         let path = request.uri().path().to_string();
@@ -1377,17 +1497,27 @@ async fn auth_middleware(State(state): State<AppState>, request: Request, next: 
     next.run(request).await
 }
 
-
 fn cache_root() -> PathBuf {
     let dir = std::env::var("SILICA_TENSOR_CACHE_DIR")
         .or_else(|_| std::env::var("SILICA_CACHE_DIR"))
-        .unwrap_or_else(|_| std::env::temp_dir().join("silica_rust_tensor_cache").to_string_lossy().into_owned());
+        .unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("silica_rust_tensor_cache")
+                .to_string_lossy()
+                .into_owned()
+        });
     PathBuf::from(dir)
 }
 
 fn sanitize_cache_id(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -1416,7 +1546,10 @@ async fn cache_stats_handler() -> impl IntoResponse {
 }
 
 async fn cache_verify_handler(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
-    let model = payload.get("modelId").and_then(|v| v.as_str()).unwrap_or("");
+    let model = payload
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let start = payload.get("start").and_then(|v| v.as_u64()).unwrap_or(0);
     let end = payload.get("end").and_then(|v| v.as_u64()).unwrap_or(0);
     let id = sanitize_cache_id(model);
@@ -1424,7 +1557,11 @@ async fn cache_verify_handler(Json(payload): Json<serde_json::Value>) -> impl In
     let mut missing = Vec::new();
     for layer in start..=end {
         let path = cache_root().join(format!("{}.layer{}.bin", id, layer));
-        if path.exists() { cached.push(layer); } else { missing.push(layer); }
+        if path.exists() {
+            cached.push(layer);
+        } else {
+            missing.push(layer);
+        }
     }
     Json(serde_json::json!({
         "ok": true, "modelId": model, "cached": cached, "missing": missing,
@@ -1433,21 +1570,43 @@ async fn cache_verify_handler(Json(payload): Json<serde_json::Value>) -> impl In
 }
 
 async fn cache_store_layer_handler(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
-    let model = payload.get("modelId").and_then(|v| v.as_str()).unwrap_or("");
+    let model = payload
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let layer = payload.get("layer").and_then(|v| v.as_u64()).unwrap_or(0);
-    let data = payload.get("dataB64").and_then(|v| v.as_str()).unwrap_or("");
+    let data = payload
+        .get("dataB64")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let bytes = match base64_decode(data) {
         Ok(b) => b,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e }))),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": e })),
+            )
+        }
     };
     let dir = cache_root();
     if std::fs::create_dir_all(&dir).is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "ok": false, "error": "cache dir" })));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": "cache dir" })),
+        );
     }
     let path = dir.join(format!("{}.layer{}.bin", sanitize_cache_id(model), layer));
     match std::fs::write(&path, bytes) {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "bytes": path.metadata().map(|m| m.len()).unwrap_or(0) }))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "ok": false, "error": e.to_string() }))),
+        Ok(_) => (
+            StatusCode::OK,
+            Json(
+                serde_json::json!({ "ok": true, "bytes": path.metadata().map(|m| m.len()).unwrap_or(0) }),
+            ),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        ),
     }
 }
 
@@ -1479,7 +1638,9 @@ async fn cache_clear_handler() -> impl IntoResponse {
     let dir = cache_root();
     let removed = if dir.exists() {
         std::fs::remove_dir_all(&dir).map(|_| true).unwrap_or(false)
-    } else { false };
+    } else {
+        false
+    };
     Json(serde_json::json!({ "ok": true, "removed": removed }))
 }
 
@@ -1488,8 +1649,14 @@ async fn benchmarks_handler(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let model = params.get("modelId").cloned().unwrap_or_default();
-    let history: Vec<serde_json::Value> = state.benchmarks.read().await
-        .iter().filter(|r| r.get("modelId").and_then(|v| v.as_str()).unwrap_or("") == model).cloned().collect();
+    let history: Vec<serde_json::Value> = state
+        .benchmarks
+        .read()
+        .await
+        .iter()
+        .filter(|r| r.get("modelId").and_then(|v| v.as_str()).unwrap_or("") == model)
+        .cloned()
+        .collect();
     Json(serde_json::json!({
         "history": history,
         "latest": history.first().cloned()
@@ -1500,8 +1667,15 @@ async fn benchmarks_run_handler(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let model = payload.get("modelId").and_then(|v| v.as_str()).unwrap_or("active").to_string();
-    let max_tokens = payload.get("maxTokens").and_then(|v| v.as_u64()).unwrap_or(48);
+    let model = payload
+        .get("modelId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("active")
+        .to_string();
+    let max_tokens = payload
+        .get("maxTokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(48);
     let result = serde_json::json!({
         "id": format!("bench-{}", chrono_like_now()),
         "modelId": model,
@@ -1522,7 +1696,9 @@ async fn benchmarks_run_handler(
     });
     let mut history = state.benchmarks.write().await;
     history.insert(0, result.clone());
-    if history.len() > 20 { history.truncate(20); }
+    if history.len() > 20 {
+        history.truncate(20);
+    }
     Json(serde_json::json!({ "ok": true, "result": result, "history": history.clone() }))
 }
 
@@ -1559,7 +1735,10 @@ async fn wifi_status_handler() -> impl IntoResponse {
 }
 
 async fn wifi_qr_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let payload = format!("clusterd://pair?master=127.0.0.1:{}&rpc=50055&secret={}", state.port, state.cluster_secret);
+    let payload = format!(
+        "clusterd://pair?master=127.0.0.1:{}&rpc=50055&secret={}",
+        state.port, state.cluster_secret
+    );
     let crc = crc8(payload.as_bytes());
     let mut matrix = vec![vec![false; 21]; 21];
     for (i, b) in payload.bytes().enumerate().take(21 * 21) {
@@ -1577,22 +1756,38 @@ fn crc8(data: &[u8]) -> u8 {
     for &b in data {
         crc ^= b;
         for _ in 0..8 {
-            crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x07 } else { crc << 1 };
+            crc = if crc & 0x80 != 0 {
+                (crc << 1) ^ 0x07
+            } else {
+                crc << 1
+            };
         }
     }
     crc
 }
 
 async fn wifi_connect_handler(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
-    let raw = payload.get("rawPayload").and_then(|v| v.as_str()).unwrap_or("");
+    let raw = payload
+        .get("rawPayload")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let expected_crc = payload
         .get("crc8Hex")
         .and_then(|v| v.as_str())
         .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-    if raw.starts_with("clusterd://pair?") && raw.len() > 20 && expected_crc == Some(crc8(raw.as_bytes())) {
-        (StatusCode::OK, Json(serde_json::json!({ "ok": true, "message": "P2P payload verified (CRC-8)" })))
+    if raw.starts_with("clusterd://pair?")
+        && raw.len() > 20
+        && expected_crc == Some(crc8(raw.as_bytes()))
+    {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "message": "P2P payload verified (CRC-8)" })),
+        )
     } else {
-        (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": "Invalid P2P payload" })))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "Invalid P2P payload" })),
+        )
     }
 }
 
@@ -1600,7 +1795,11 @@ async fn upstream_test_handler(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let url = payload
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     let local_upstream = url.starts_with("http://127.0.0.1:8080")
         || url.starts_with("http://localhost:8080")
         || url.starts_with("http://127.0.0.1:11434")
@@ -1608,26 +1807,48 @@ async fn upstream_test_handler(
     let valid = if local_upstream {
         match reqwest::Url::parse(url) {
             Ok(u) => u,
-            Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e.to_string() }))),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                )
+            }
         }
     } else {
         match tools::validate_public_http_url(url) {
             Ok(u) => u,
-            Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e }))),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "ok": false, "error": e })),
+                )
+            }
         }
     };
-    let apply = payload.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
+    let apply = payload
+        .get("apply")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if apply {
-        state.engine.set_external_upstream(Some(valid.to_string()), None).await;
+        state
+            .engine
+            .set_external_upstream(Some(valid.to_string()), None)
+            .await;
     }
-    (StatusCode::OK, Json(serde_json::json!({ "ok": true, "url": valid.to_string(), "status": 200 })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "ok": true, "url": valid.to_string(), "status": 200 })),
+    )
 }
 
 async fn failover_config_handler(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let url = payload.get("failoverMasterUrl").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let url = payload
+        .get("failoverMasterUrl")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     *state.failover_url.write().await = url.clone();
     Json(serde_json::json!({ "ok": true, "failoverMasterUrl": url }))
 }
@@ -1666,19 +1887,33 @@ async fn history_get_handler(State(state): State<AppState>) -> impl IntoResponse
 }
 
 async fn engine_binaries_handler() -> impl IntoResponse {
-    let binary = std::env::var("SILICA_LLAMA_SERVER_BINARY").unwrap_or_else(|_| "llama-server".to_string());
+    let binary =
+        std::env::var("SILICA_LLAMA_SERVER_BINARY").unwrap_or_else(|_| "llama-server".to_string());
     Json(serde_json::json!({ "binaries": [binary] }))
 }
 
-async fn local_models_add_handler(State(state): State<AppState>, Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
-    let path = payload.get("path").or_else(|| payload.get("filePath")).and_then(|v| v.as_str()).unwrap_or("");
+async fn local_models_add_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let path = payload
+        .get("path")
+        .or_else(|| payload.get("filePath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let (ctx, kvq) = inspect_context(&state).await;
     match inspect_gguf_file(PathBuf::from(path).as_path(), ctx, &kvq) {
         Ok(card) => {
             *state.active_card.write().await = Some(card.clone());
-            (StatusCode::OK, Json(serde_json::json!({ "ok": true, "model": model_card_to_preset(&card) })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "ok": true, "model": model_card_to_preset(&card) })),
+            )
         }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e }))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": e })),
+        ),
     }
 }
 
@@ -1721,7 +1956,11 @@ async fn main() {
 
     if mode == "auto" {
         if let Some((ip, mport, _)) = discover_master_udp(900) {
-            tracing::info!("--auto detected live Master at {}:{} -> joining as worker", ip, mport);
+            tracing::info!(
+                "--auto detected live Master at {}:{} -> joining as worker",
+                ip,
+                mport
+            );
             mode = "worker".to_string();
             master_override = Some(format!("{}:{}", ip, mport));
         } else {
@@ -1745,13 +1984,15 @@ async fn main() {
         return;
     }
 
-    let api_token = std::env::var("CLUSTER_API_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    let api_token = std::env::var("CLUSTER_API_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty());
     if bind_host != "127.0.0.1" && bind_host != "localhost" && api_token.is_none() {
         eprintln!("Refusing to bind {} without CLUSTER_API_TOKEN; use --bind 127.0.0.1 for local-only use.", bind_host);
         std::process::exit(2);
     }
-    let cluster_secret = std::env::var("CLUSTER_SECRET")
-        .unwrap_or_else(|_| "clusterd-default-hmac-key".to_string());
+    let cluster_secret =
+        std::env::var("CLUSTER_SECRET").unwrap_or_else(|_| "clusterd-default-hmac-key".to_string());
     spawn_udp_discovery_responder(port);
 
     let history_store = ClusterHistoryStore::load_or_default(&ClusterHistoryStore::default_path());
@@ -1794,20 +2035,38 @@ async fn main() {
         .route("/api/diagnostics/sentinel", get(sentinel_handler))
         .route("/api/network/wifi-direct/status", get(wifi_status_handler))
         .route("/api/network/wifi-direct/qr", get(wifi_qr_handler))
-        .route("/api/network/wifi-direct/connect", post(wifi_connect_handler))
+        .route(
+            "/api/network/wifi-direct/connect",
+            post(wifi_connect_handler),
+        )
         .route("/api/upstream/test", post(upstream_test_handler))
-        .route("/api/upstream/failover-config", post(failover_config_handler))
+        .route(
+            "/api/upstream/failover-config",
+            post(failover_config_handler),
+        )
         .route("/api/cluster/network/audit", get(network_audit_handler))
-        .route("/api/cluster/tuning/advice", get(tuning_advice_handler).post(tuning_advice_handler))
+        .route(
+            "/api/cluster/tuning/advice",
+            get(tuning_advice_handler).post(tuning_advice_handler),
+        )
         .route("/api/history", get(history_get_handler))
         .route("/api/engine/binaries", get(engine_binaries_handler))
         .route("/api/local/models/add", post(local_models_add_handler))
         .route("/api/nodes/add", post(register_worker_handler))
         .route("/api/hf/models", get(hf_models_handler))
-        .route("/api/tools/cluster-status", post(tools_cluster_status_handler))
+        .route(
+            "/api/tools/cluster-status",
+            post(tools_cluster_status_handler),
+        )
         .route("/api/tools/web-search", post(tools_web_search_handler))
-        .route("/api/cluster/tuning/auto-apply", post(tuning_auto_apply_handler))
-        .route("/api/cluster/state", get(cluster_state_handler).post(cluster_state_post_handler))
+        .route(
+            "/api/cluster/tuning/auto-apply",
+            post(tuning_auto_apply_handler),
+        )
+        .route(
+            "/api/cluster/state",
+            get(cluster_state_handler).post(cluster_state_post_handler),
+        )
         .route("/api/models", get(models_list_handler))
         .route("/api/local/models", get(local_models_handler))
         .route("/api/models/activate", post(models_activate_handler))
@@ -1817,7 +2076,10 @@ async fn main() {
         .route("/api/cluster/beacon", get(beacon_handler))
         .route("/api/cluster/hardware", get(hardware_handler))
         .route("/api/cluster/nodes/register", post(register_worker_handler))
-        .route("/api/cluster/nodes/unregister", post(unregister_worker_handler))
+        .route(
+            "/api/cluster/nodes/unregister",
+            post(unregister_worker_handler),
+        )
         .route("/api/models/inspect", post(inspect_gguf_handler))
         .route("/api/engine/reload", post(reload_model_handler))
         .route("/api/engine/events", get(engine_events_sse))
@@ -1831,8 +2093,14 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind((bind_host.as_str(), port))
         .await
         .expect("Failed to bind clusterd HTTP listener");
-    tracing::info!("Silica Cluster pure-Rust Master running on http://{}:{}", bind_host, port);
-    axum::serve(listener, app).await.expect("clusterd server error");
+    tracing::info!(
+        "Silica Cluster pure-Rust Master running on http://{}:{}",
+        bind_host,
+        port
+    );
+    axum::serve(listener, app)
+        .await
+        .expect("clusterd server error");
 }
 
 #[cfg(test)]
@@ -1851,7 +2119,13 @@ mod tests {
 
     #[test]
     fn crc8_is_stable_for_pairing_payload() {
-        assert_eq!(crc8(b"clusterd://pair?master=127.0.0.1:3000"), crc8(b"clusterd://pair?master=127.0.0.1:3000"));
-        assert_ne!(crc8(b"clusterd://pair?master=127.0.0.1:3000"), crc8(b"clusterd://pair?master=127.0.0.1:3001"));
+        assert_eq!(
+            crc8(b"clusterd://pair?master=127.0.0.1:3000"),
+            crc8(b"clusterd://pair?master=127.0.0.1:3000")
+        );
+        assert_ne!(
+            crc8(b"clusterd://pair?master=127.0.0.1:3000"),
+            crc8(b"clusterd://pair?master=127.0.0.1:3001")
+        );
     }
 }

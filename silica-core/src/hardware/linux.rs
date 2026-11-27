@@ -45,7 +45,11 @@ fn read_sys_thermal_c() -> f64 {
             let temp_path = entry.path().join("temp");
             if let Ok(raw) = fs::read_to_string(temp_path) {
                 if let Ok(milli_c) = raw.trim().parse::<f64>() {
-                    let c = if milli_c > 200.0 { milli_c / 1000.0 } else { milli_c };
+                    let c = if milli_c > 200.0 {
+                        milli_c / 1000.0
+                    } else {
+                        milli_c
+                    };
                     if c > 15.0 && c < 120.0 && c > max_c {
                         max_c = c;
                     }
@@ -86,7 +90,11 @@ fn probe_nvidia_gpu() -> Option<(String, f64, f64, f64, f64)> {
     if !out.status.success() {
         return None;
     }
-    let line = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+    let line = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
     let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
     if parts.len() < 5 {
         return None;
@@ -111,7 +119,13 @@ fn probe_rpi_vcgencmd() -> (bool, Option<f64>, Option<String>) {
         .ok()
         .and_then(|o| {
             let s = String::from_utf8_lossy(&o.stdout);
-            s.split('=').nth(1)?.split('\'').next()?.trim().parse::<f64>().ok()
+            s.split('=')
+                .nth(1)?
+                .split('\'')
+                .next()?
+                .trim()
+                .parse::<f64>()
+                .ok()
         });
     let throttled = Command::new("vcgencmd")
         .arg("get_throttled")
@@ -120,7 +134,6 @@ fn probe_rpi_vcgencmd() -> (bool, Option<f64>, Option<String>) {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     (true, temp, throttled)
 }
-
 
 fn query_linux_cpu_usage_pct() -> f64 {
     fn sample() -> Option<(u64, u64)> {

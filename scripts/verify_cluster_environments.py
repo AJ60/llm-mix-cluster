@@ -5,7 +5,7 @@ Silica Cluster — Live Multi-VM / Isolated-Namespace End-to-End Verification Su
 
 Spawns real OS-isolated virtual nodes using Linux namespaces (`unshare --uts --ipc --pid --fork`)
 with distinct per-node virtual IPs (`127.0.10.2`..`127.0.10.5`, `127.0.10.9`), live TCP 32-byte
-keyed GGUF/RPC v9 handshakes, and a live OpenAI-compatible upstream VM server.
+keyed GGUF/RPC v10 handshakes, and a live OpenAI-compatible upstream VM server.
 
 Usage:
   python3 scripts/verify_cluster_environments.py [--base-url http://127.0.0.1:3000] [--hold-seconds 0]
@@ -430,7 +430,7 @@ def run_suite(base_url: str, hold_seconds: float):
         # ------------------------------------------------------------------
         # Stage 1: Health, Beacon & Honest Offline 503 Gate
         # ------------------------------------------------------------------
-        print("\n[Stage 1/9] Master Health, Beacon (RPC v9), & Honest HTTP 503 Offline Gate")
+        print("\n[Stage 1/9] Master Health, Beacon (RPC v10), & Honest HTTP 503 Offline Gate")
         st, health = http_json(base_url, "/health")
         assert st == 200 and health.get("service") == "Silica Cluster", f"Bad /health: {st} {health}"
         st, beacon = http_json(base_url, "/api/cluster/beacon")
@@ -447,7 +447,7 @@ def run_suite(base_url: str, hold_seconds: float):
         assert st == 503 and offline_chat.get("error", {}).get("code") == "ENGINE_OFFLINE", (
             f"Expected HTTP 503 ENGINE_OFFLINE, got {st}: {offline_chat}"
         )
-        print("  [PASS] Master online, RPC v9 beacon active, /v1/chat/completions honestly returns HTTP 503.")
+        print("  [PASS] Master online, RPC v10 beacon active, /v1/chat/completions honestly returns HTTP 503.")
 
         # ------------------------------------------------------------------
         # Stage 2: Boot 4 Isolated Worker VMs + Live 32-Byte Keyed TCP Handshakes
@@ -566,7 +566,7 @@ def run_suite(base_url: str, hold_seconds: float):
             st, res = http_json(base_url, "/api/cluster/nodes/register", reg_payload, method="POST")
             assert st == 200 and res.get("ok") is True, f"Legitimate VM {vm['id']} failed handshake: {st} {res}"
             registered_ids.append(vm["id"])
-            print(f"  [PASS] {vm['id']} ({vm['ip']}:{vm['rpcPort']}) verified via 32-byte GGUF/RPC v9 handshake.")
+            print(f"  [PASS] {vm['id']} ({vm['ip']}:{vm['rpcPort']}) verified via 32-byte GGUF/RPC v10 handshake.")
 
         # Register the rogue VM — MUST fail with HTTP 502!
         rogue_payload = {k: v for k, v in vm_specs[3].items() if k not in ("flags", "rogue")}

@@ -18,7 +18,6 @@ pub struct WorkerCliOptions {
     pub rpc_binary: String,
 }
 
-
 fn local_ip_for_master(master_ip: &str) -> String {
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
         if socket.connect(format!("{}:9", master_ip)).is_ok() {
@@ -36,10 +35,14 @@ fn local_ip_for_master(master_ip: &str) -> String {
 fn spawn_rpc(opts: &WorkerCliOptions, big_cores: u32, safe_cap_mb: u64) -> Option<Child> {
     Command::new(&opts.rpc_binary)
         .args([
-            "-H", &opts.bind_host,
-            "-p", &opts.rpc_port.to_string(),
-            "-t", &big_cores.to_string(),
-            "-m", &safe_cap_mb.to_string(),
+            "-H",
+            &opts.bind_host,
+            "-p",
+            &opts.rpc_port.to_string(),
+            "-t",
+            &big_cores.to_string(),
+            "-m",
+            &safe_cap_mb.to_string(),
             "-c",
         ])
         .spawn()
@@ -102,7 +105,9 @@ pub async fn run_worker_mode(opts: WorkerCliOptions) -> Result<(), String> {
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
     let master_base = format!("http://{}:{}", master_ip, master_port);
-    let api_token = std::env::var("CLUSTER_API_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    let api_token = std::env::var("CLUSTER_API_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty());
     let advertise_ip = if opts.bind_host == "0.0.0.0" {
         local_ip_for_master(&master_ip)
     } else {
@@ -113,7 +118,9 @@ pub async fn run_worker_mode(opts: WorkerCliOptions) -> Result<(), String> {
     #[cfg(unix)]
     let term_future = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut stream) => { let _ = stream.recv().await; }
+            Ok(mut stream) => {
+                let _ = stream.recv().await;
+            }
             Err(e) => tracing::warn!("Cannot install SIGTERM handler: {}", e),
         }
     };

@@ -4,7 +4,7 @@ Five work areas, each with its own verification gate:
 - **Canonical engine**: `silica-core/` → `clusterd` (Rust/axum master + worker, port 3000, embedded UI from `../dist/`).
 - **Web UI**: React 19/Vite in `src/`, embedded into `clusterd` via `rust-embed`. UI consumes server `plan`/`tuningAdvice`; `src/domain/starClusterPlanner.ts` and `tuningAdvisor.ts` are legacy test/CLI code, not the runtime planner.
 - Node API tests spawn `clusterd` via `src/__tests__/helpers/clusterdHarness.ts`; it prefers `silica-core/target/release/clusterd`, then debug. Rebuild the binary you changed before `npm test` — a stale release binary silently invalidates API tests (CI builds debug with `cargo build --manifest-path silica-core/Cargo.toml`).
-- **Android worker**: `app/` (Kotlin Compose service + CMake/NDK Vulkan probe libraries).
+- **Android worker**: `app/` (Kotlin Compose service + CMake/NDK `rpc_server_exec*.so` with v10/BWPR listener; embedded responder fallback).
 - **Python E2E**: `tests/` (namespace/QEMU multi-VM cluster verification).
 
 ## Commands (source of truth: package.json, ci.yml)
@@ -14,7 +14,7 @@ Five work areas, each with its own verification gate:
 - `npm run silica` → `tsx bin/silica.ts` CLI (`serve|run|status|cache|test`)
 - Rust: `npm run build:client && cd silica-core && cargo build --release && cargo test`; focused: `cargo test <filter>`. `rust-embed` requires `dist/` even for `cargo test`.
 - Android: set `ANDROID_HOME`, then `./gradlew :app:compileDebugKotlin :app:externalNativeBuildDebug :app:testDebugUnitTest` (`gradlew.bat` on Windows; NDK 26.1.10909125, CMake 3.22.1, arm64-v8a only). APK: `:app:assembleDebug`.
-- Python E2E needs a live master on `http://127.0.0.1:3000`: `python3 -m unittest discover -s tests -p "test_*.py" -v`; default `CLUSTER_TEST_MODE=local` uses `unshare` (Linux only)
+- Python: `python3 -m unittest tests.test_protocol_vectors -v` (CI-safe); full E2E needs a live master on `http://127.0.0.1:3000` via `python3 -m unittest discover -s tests -p "test_*.py" -v`, default `CLUSTER_TEST_MODE=local` uses `unshare` (Linux only)
 - Native probe C++: `g++ -std=c++17 -Wall -Wextra -Werror app/src/main/cpp/rpc_server_test.cpp -ldl -pthread -o /tmp/rpc_server_test && /tmp/rpc_server_test`
 
 ## Gotchas

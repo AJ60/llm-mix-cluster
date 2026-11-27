@@ -224,9 +224,8 @@ impl EngineSupervisor {
         if let Some(index) = cli_args.iter().position(|arg| arg == "--slot-save-path") {
             if let Some(path) = cli_args.get(index + 1) {
                 if !path.is_empty() {
-                    fs::create_dir_all(path).map_err(|e| {
-                        format!("Cannot create slot save path {}: {}", path, e)
-                    })?;
+                    fs::create_dir_all(path)
+                        .map_err(|e| format!("Cannot create slot save path {}: {}", path, e))?;
                 }
             }
         }
@@ -301,7 +300,8 @@ mod tests {
 
         let t2 = tracker.clone();
         let drain_task = tokio::spawn(async move {
-            t2.drain_until_turn_boundary(Duration::from_millis(500)).await
+            t2.drain_until_turn_boundary(Duration::from_millis(500))
+                .await
         });
 
         tokio::time::sleep(Duration::from_millis(40)).await;
@@ -323,9 +323,8 @@ mod tests {
         let guard = tracker.try_acquire().expect("should acquire turn");
         let t2 = tracker.clone();
         let started = std::time::Instant::now();
-        let drain_task = tokio::spawn(async move {
-            t2.drain_until_turn_boundary(Duration::from_secs(5)).await
-        });
+        let drain_task =
+            tokio::spawn(async move { t2.drain_until_turn_boundary(Duration::from_secs(5)).await });
         tokio::time::sleep(Duration::from_millis(20)).await;
         drop(guard);
         assert!(drain_task.await.unwrap());
@@ -336,7 +335,10 @@ mod tests {
     async fn stop_clears_stale_engine_status() {
         let supervisor = EngineSupervisor::new();
         supervisor
-            .set_external_upstream(Some("http://127.0.0.1:8080".to_string()), Some("test".to_string()))
+            .set_external_upstream(
+                Some("http://127.0.0.1:8080".to_string()),
+                Some("test".to_string()),
+            )
             .await;
         assert!(supervisor.status().await.running);
         supervisor.stop().await.expect("stop should succeed");

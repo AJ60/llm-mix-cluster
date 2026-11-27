@@ -52,10 +52,10 @@ class TestRpcHeartbeatAndDiscovery(unittest.TestCase):
             ok, frame, rtt_ms = probe_tcp_rpc_handshake(
                 ep.host, ep.port, self.harness.cluster_secret
             )
-            self.assertTrue(ok, f"Expected valid GGUF/RPC v9 handshake from {ep.host}:{ep.port}")
+            self.assertTrue(ok, f"Expected valid GGUF/RPC v10 handshake from {ep.host}:{ep.port}")
             assert frame is not None
-            self.assertEqual(frame["rpc_version"], 9)
-            self.assertEqual(frame["version_tag"], "v1.0.0")
+            self.assertEqual(frame["rpc_version"], 10)
+            self.assertEqual(frame["status"], "READY")
             self.assertEqual(frame["big_cores"], ep.big_cores)
             self.assertGreater(frame["safe_cap_mb"], 0)
             self.assertGreater(rtt_ms, 0.0)

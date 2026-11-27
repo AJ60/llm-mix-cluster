@@ -52,7 +52,10 @@ pub fn validate_public_http_url(raw: &str) -> Result<Url, String> {
         return Err("Private or loopback hostnames are blocked".to_string());
     }
 
-    if let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
+    if let Ok(ip) = host
+        .trim_matches(|c| c == '[' || c == ']')
+        .parse::<IpAddr>()
+    {
         if is_blocked_ip(ip) {
             return Err("Private, loopback, or link-local IP addresses are blocked".to_string());
         }

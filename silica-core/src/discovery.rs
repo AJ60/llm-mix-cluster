@@ -5,8 +5,8 @@
 //!   GGUF/RPC v9/v1.0.0 handshake AND an active heartbeat (< 30s TTL).
 
 use crate::planner::{LinkTransport, LiveNodeInput, NodeOs};
-use crate::protocol::{GgufHandshakeFrame, LinkQuality, WorkerHandshakeStatus};
 use crate::protocol::probe_worker_link_quality;
+use crate::protocol::{GgufHandshakeFrame, LinkQuality, WorkerHandshakeStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -87,7 +87,10 @@ impl WorkerRegistry {
     }
 
     /// Registers or refreshes a worker ONLY after verifying its 32-byte GGUF/RPC v9 handshake.
-    pub async fn register_and_verify(&self, req: WorkerRegisterRequest) -> Result<LiveNodeInput, String> {
+    pub async fn register_and_verify(
+        &self,
+        req: WorkerRegisterRequest,
+    ) -> Result<LiveNodeInput, String> {
         let port = req.rpc_port.unwrap_or(50052);
         let ip: IpAddr = req
             .ip
@@ -172,9 +175,9 @@ impl WorkerRegistry {
             gpu_usage_pct: req.gpu_usage_pct.unwrap_or(0.0),
             storage_total_mb: req.storage_total_mb.unwrap_or(0.0),
             storage_free_mb: req.storage_free_mb.unwrap_or(0.0),
-            compute_tflops: req.compute_tflops.unwrap_or_else(|| {
-                (req.mem_bw_gbps.unwrap_or(28.0) / 45.0 * 10.0).round() / 10.0
-            }),
+            compute_tflops: req
+                .compute_tflops
+                .unwrap_or_else(|| (req.mem_bw_gbps.unwrap_or(28.0) / 45.0 * 10.0).round() / 10.0),
             handshake_verified: !browser_worker,
             heartbeat_age_s: 0,
         };
@@ -215,7 +218,10 @@ impl WorkerRegistry {
 pub fn spawn_udp_discovery_responder(http_port: u16) {
     tokio::task::spawn_blocking(move || {
         let Ok(sock) = UdpSocket::bind(("0.0.0.0", DISCOVERY_UDP_PORT)) else {
-            tracing::warn!("UDP :{} busy; discovery responder skipped", DISCOVERY_UDP_PORT);
+            tracing::warn!(
+                "UDP :{} busy; discovery responder skipped",
+                DISCOVERY_UDP_PORT
+            );
             return;
         };
         let _ = sock.set_broadcast(true);

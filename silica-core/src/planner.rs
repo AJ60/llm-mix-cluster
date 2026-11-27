@@ -73,21 +73,26 @@ pub struct LiveNodeInput {
     pub heartbeat_age_s: u64,
 }
 
-fn serialize_manual_tensor_split<S>(value: &Option<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_manual_tensor_split<S>(
+    value: &Option<Vec<f64>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     match value {
         Some(parts) if !parts.is_empty() => serializer.serialize_str(
-            &parts.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","),
+            &parts
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
         ),
         _ => serializer.serialize_str(""),
     }
 }
 
-fn deserialize_manual_tensor_split<'de, D>(
-    deserializer: D,
-) -> Result<Option<Vec<f64>>, D::Error>
+fn deserialize_manual_tensor_split<'de, D>(deserializer: D) -> Result<Option<Vec<f64>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -105,7 +110,11 @@ where
                 .split(|c: char| c == ',' || c.is_whitespace())
                 .filter_map(|p| p.trim().parse::<f64>().ok())
                 .collect();
-            if parts.is_empty() { None } else { Some(parts) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts)
+            }
         }
         None => None,
     })
@@ -183,7 +192,9 @@ impl ModelLoadConfig {
         cfg.flash_attn = !native_ternary;
         cfg.moe_cpu_offload = card.arch_mode == crate::gguf::ModelArchMode::MoE;
         cfg.windows_no_mmap = card.file_size_mb <= 20000.0;
-        cfg.batch_size = if card.arch_mode == crate::gguf::ModelArchMode::Ternary || card.file_size_mb >= 10000.0 {
+        cfg.batch_size = if card.arch_mode == crate::gguf::ModelArchMode::Ternary
+            || card.file_size_mb >= 10000.0
+        {
             512
         } else {
             1024
@@ -338,7 +349,11 @@ pub fn compute_safe_caps(node: &LiveNodeInput) -> (f64, f64, ThermalState) {
         scale
     };
 
-    (raw_ram_cap * eff_scale, raw_vram_cap * eff_scale, thermal_state)
+    (
+        raw_ram_cap * eff_scale,
+        raw_vram_cap * eff_scale,
+        thermal_state,
+    )
 }
 
 /// Strict stock `llama.cpp v1.0.0` CLI flag allowlist validator.
@@ -376,13 +391,15 @@ pub fn validate_stock_llama_cpp_flags(args: &[String]) -> Result<(), String> {
     for arg in args {
         if arg.starts_with('-') {
             if !allowed.contains(arg.as_str()) {
-                return Err(format!("Disallowed / non-stock llama.cpp v1.0.0 flag: {}", arg));
+                return Err(format!(
+                    "Disallowed / non-stock llama.cpp v1.0.0 flag: {}",
+                    arg
+                ));
             }
         }
     }
     Ok(())
 }
-
 
 fn activation_transfer_mb(card: &GgufModelCard) -> f64 {
     card.embedding_length as f64 * 2.0 / (1024.0 * 1024.0)
@@ -479,16 +496,18 @@ pub fn compute_cluster_plan(
         .map(|l| l.total_weight_mb)
         .sum();
     let base_context = card.profiled_context.max(4096);
-    let requested_context = cfg.context_length.max(4096).min(card.context_length.max(4096));
+    let requested_context = cfg
+        .context_length
+        .max(4096)
+        .min(card.context_length.max(4096));
     let kv_per_context_mb = card
         .per_layer_profiles
         .iter()
         .map(|l| l.kv_cache_mb)
         .sum::<f64>()
         / base_context as f64;
-    let available_for_kv = (fast_tier_pool_mb - card.master_pinned_overhead_mb - layer_weight_mb)
-        .max(0.0)
-        * 0.9;
+    let available_for_kv =
+        (fast_tier_pool_mb - card.master_pinned_overhead_mb - layer_weight_mb).max(0.0) * 0.9;
     let max_context_by_memory = (available_for_kv / kv_per_context_mb.max(1e-6)).floor() as u32;
     let effective_context = [4096u32, 8192, 16384, 32768, 65536, 131072, 262144]
         .iter()
@@ -528,8 +547,11 @@ pub fn compute_cluster_plan(
         if !node.is_master {
             if node.os == NodeOs::WebGPU {
                 pruned = true;
-                prune_reason = Some("Browser WebGPU worker cannot serve llama.cpp RPC layers".to_string());
-            } else if *thermal_state == ThermalState::EmergencyOffload || (*safe_cap_mb + *vram_safe_mb) < 256.0 {
+                prune_reason =
+                    Some("Browser WebGPU worker cannot serve llama.cpp RPC layers".to_string());
+            } else if *thermal_state == ThermalState::EmergencyOffload
+                || (*safe_cap_mb + *vram_safe_mb) < 256.0
+            {
                 pruned = true;
                 prune_reason = Some("Thermal offload or insufficient safe RAM cap".to_string());
             } else if fast_tier_fits
@@ -621,16 +643,24 @@ pub fn compute_cluster_plan(
     let mb_per_layer = if profiles.is_empty() {
         (card.file_size_mb / total_layers.max(1) as f64).max(1.0)
     } else {
-        (profiles.iter().map(|p| p.total_weight_mb + p.kv_cache_mb).sum::<f64>()
-            / profiles.len() as f64).max(1.0)
+        (profiles
+            .iter()
+            .map(|p| p.total_weight_mb + p.kv_cache_mb)
+            .sum::<f64>()
+            / profiles.len() as f64)
+            .max(1.0)
     };
-    
+
     // Master gets first slice [0, master_layers - 1], workers get contiguous subsequent slices
     let master_idx = active_indices.first().copied().unwrap_or(0);
     let activation_mb = activation_transfer_mb(card);
     let worker_indices = ordered_worker_chain(
         evaluated[master_idx].0,
-        &active_indices.iter().copied().filter(|&i| i != master_idx).collect::<Vec<_>>(),
+        &active_indices
+            .iter()
+            .copied()
+            .filter(|&i| i != master_idx)
+            .collect::<Vec<_>>(),
         &evaluated,
         activation_mb,
     );
@@ -640,8 +670,14 @@ pub fn compute_cluster_plan(
 
     for &w_idx in &worker_indices {
         let max_cap_layers = (node_remaining_mb[w_idx] / mb_per_layer).floor().max(0.0) as u32;
-        let score_weight = raw_weights.iter().find(|(idx, _)| *idx == w_idx).map(|(_, w)| *w).unwrap_or(1.0);
-        let target_layers = ((total_layers as f64) * (score_weight / weight_sum)).round().max(0.0) as u32;
+        let score_weight = raw_weights
+            .iter()
+            .find(|(idx, _)| *idx == w_idx)
+            .map(|(_, w)| *w)
+            .unwrap_or(1.0);
+        let target_layers = ((total_layers as f64) * (score_weight / weight_sum))
+            .round()
+            .max(0.0) as u32;
         let count = max_cap_layers.min(target_layers);
         worker_layer_counts.push((w_idx, count));
         total_worker_layers += count;
@@ -654,7 +690,9 @@ pub fn compute_cluster_plan(
             let deduct = (*count).min(excess);
             *count -= deduct;
             excess -= deduct;
-            if excess == 0 { break; }
+            if excess == 0 {
+                break;
+            }
         }
         total_worker_layers = allowed;
     }
@@ -680,7 +718,12 @@ pub fn compute_cluster_plan(
 
     if cursor_layer < total_layers {
         let remaining = total_layers - cursor_layer;
-        let last_active_idx = worker_indices.iter().copied().rev().find(|&i| allocations[i].layer_count > 0).unwrap_or(master_idx);
+        let last_active_idx = worker_indices
+            .iter()
+            .copied()
+            .rev()
+            .find(|&i| allocations[i].layer_count > 0)
+            .unwrap_or(master_idx);
         let layer_mb = |idx: u32| -> f64 {
             profiles
                 .get(idx as usize)
@@ -706,22 +749,33 @@ pub fn compute_cluster_plan(
         }
         if extra > 0 {
             allocations[last_active_idx].layer_count += extra;
-            allocations[last_active_idx].layer_end =
-                Some(allocations[last_active_idx].layer_start.unwrap_or(cursor_layer) + extra - 1);
+            allocations[last_active_idx].layer_end = Some(
+                allocations[last_active_idx]
+                    .layer_start
+                    .unwrap_or(cursor_layer)
+                    + extra
+                    - 1,
+            );
         }
     }
 
     // Compute exact non-uniform byte allocation based on assigned contiguous spans
     for &idx in &active_indices {
         if allocations[idx].layer_count > 0 {
-            if let (Some(start), Some(end)) = (allocations[idx].layer_start, allocations[idx].layer_end) {
+            if let (Some(start), Some(end)) =
+                (allocations[idx].layer_start, allocations[idx].layer_end)
+            {
                 let mut layer_mb = 0.0f64;
                 for l_idx in start..=end {
                     if let Some(prof) = profiles.get(l_idx as usize) {
                         layer_mb += prof.total_weight_mb + prof.kv_cache_mb;
                     }
                 }
-                let master_pinned = if idx == master_idx { card.master_pinned_overhead_mb } else { 0.0 };
+                let master_pinned = if idx == master_idx {
+                    card.master_pinned_overhead_mb
+                } else {
+                    0.0
+                };
                 allocations[idx].alloc_mb = layer_mb + master_pinned;
             }
         }
@@ -792,7 +846,6 @@ pub fn compute_cluster_plan(
         allocations[idx].estimated_tok_per_sec = (base_tok * share).clamp(1.0, 240.0);
     }
 
-
     for &idx in &active_indices {
         if allocations[idx].layer_count == 0 {
             continue;
@@ -804,7 +857,11 @@ pub fn compute_cluster_plan(
         let order_position = if allocations[idx].is_master {
             0
         } else {
-            worker_indices.iter().position(|&i| i == idx).map(|p| p + 1).unwrap_or(0)
+            worker_indices
+                .iter()
+                .position(|&i| i == idx)
+                .map(|p| p + 1)
+                .unwrap_or(0)
         };
         let previous = if order_position == 0 {
             None
@@ -819,7 +876,11 @@ pub fn compute_cluster_plan(
                 (link_cost(previous_node, evaluated[idx].0, activation_mb) * 10.0).round() / 10.0;
         }
     }
-    if allocations[master_idx].layer_count > 0 && worker_indices.iter().any(|&i| allocations[i].layer_count > 0) {
+    if allocations[master_idx].layer_count > 0
+        && worker_indices
+            .iter()
+            .any(|&i| allocations[i].layer_count > 0)
+    {
         let last_worker = worker_indices
             .iter()
             .rev()
@@ -827,8 +888,13 @@ pub fn compute_cluster_plan(
             .copied();
         if let Some(last_idx) = last_worker {
             allocations[master_idx].handoff_count = 1;
-            allocations[master_idx].estimated_handoff_ms =
-                (link_cost(evaluated[last_idx].0, evaluated[master_idx].0, activation_mb) * 10.0).round() / 10.0;
+            allocations[master_idx].estimated_handoff_ms = (link_cost(
+                evaluated[last_idx].0,
+                evaluated[master_idx].0,
+                activation_mb,
+            ) * 10.0)
+                .round()
+                / 10.0;
         }
     }
     let estimated_handoff_ms: f64 = active_indices
@@ -962,10 +1028,7 @@ pub fn compute_cluster_plan(
         total_model_need_mb,
         effective_context,
         kv_cache_total_mb: total_kv_mb,
-        kv_per_layer_mb: profiles
-            .iter()
-            .map(|p| p.kv_cache_mb)
-            .sum::<f64>()
+        kv_per_layer_mb: profiles.iter().map(|p| p.kv_cache_mb).sum::<f64>()
             / profiles.len().max(1) as f64,
         layer_weight_mb,
         estimated_handoff_ms,
@@ -986,7 +1049,12 @@ mod tests {
     use super::*;
     use crate::gguf::LayerFootprint;
 
-    fn sample_card(layers: u32, layer_mb: f64, mode: ModelArchMode, mmproj: Option<&str>) -> GgufModelCard {
+    fn sample_card(
+        layers: u32,
+        layer_mb: f64,
+        mode: ModelArchMode,
+        mmproj: Option<&str>,
+    ) -> GgufModelCard {
         let per_layer_profiles = (0..layers)
             .map(|i| LayerFootprint {
                 layer_index: i,
@@ -1024,7 +1092,11 @@ mod tests {
             master_pinned_overhead_mb: if mmproj.is_some() { 950.0 } else { 400.0 },
             per_layer_profiles,
             estimated_params_b: 14.0,
-            active_params_b: if mode == ModelArchMode::MoE { 3.0 } else { 14.0 },
+            active_params_b: if mode == ModelArchMode::MoE {
+                3.0
+            } else {
+                14.0
+            },
         }
     }
 
@@ -1058,7 +1130,13 @@ mod tests {
         }
     }
 
-    fn android_worker(id: &str, ram_mb: f64, transport: LinkTransport, rtt: f64, temp: f64) -> LiveNodeInput {
+    fn android_worker(
+        id: &str,
+        ram_mb: f64,
+        transport: LinkTransport,
+        rtt: f64,
+        temp: f64,
+    ) -> LiveNodeInput {
         LiveNodeInput {
             node_id: id.into(),
             label: format!("Android {}", id),
@@ -1074,7 +1152,11 @@ mod tests {
             mem_bw_gbps: 34.0,
             big_cores: 4,
             rtt_p95_ms: rtt,
-            bandwidth_mbps: if transport == LinkTransport::UsbC { 480.0 } else { 180.0 },
+            bandwidth_mbps: if transport == LinkTransport::UsbC {
+                480.0
+            } else {
+                180.0
+            },
             pkt_loss_pct: if rtt > 45.0 { 2.5 } else { 0.0 },
             temp_c: temp,
             thermal_headroom: if temp >= 48.0 { 0.96 } else { 0.3 },
@@ -1113,12 +1195,20 @@ mod tests {
         }
 
         // Strict 50% physical RAM cap on Android (8192 * 0.5 = 4096 MB max)
-        let phone = plan.nodes.iter().find(|n| n.node_id == "phone-usb").unwrap();
+        let phone = plan
+            .nodes
+            .iter()
+            .find(|n| n.node_id == "phone-usb")
+            .unwrap();
         assert!(phone.safe_cap_mb <= 4096.0 + 1e-6);
 
         // Normalized --tensor-split sums cleanly to 100.0
         let split_sum: f64 = plan.tensor_split.iter().sum();
-        assert!((split_sum - 100.0).abs() < 0.05, "split sum = {}", split_sum);
+        assert!(
+            (split_sum - 100.0).abs() < 0.05,
+            "split sum = {}",
+            split_sum
+        );
 
         // Auto -nkvo triggers on 4 GB GPU at 65K context + mmproj + jinja + stock flags only
         assert!(plan.auto_nkvo);
@@ -1139,8 +1229,16 @@ mod tests {
         ];
         let plan = compute_cluster_plan(&card, &nodes, &ModelLoadConfig::default(), None);
 
-        let slow = plan.nodes.iter().find(|n| n.node_id == "slow-wifi").unwrap();
-        let hot = plan.nodes.iter().find(|n| n.node_id == "hot-phone").unwrap();
+        let slow = plan
+            .nodes
+            .iter()
+            .find(|n| n.node_id == "slow-wifi")
+            .unwrap();
+        let hot = plan
+            .nodes
+            .iter()
+            .find(|n| n.node_id == "hot-phone")
+            .unwrap();
         assert!(slow.pruned);
         assert!(hot.pruned);
         assert_eq!(hot.thermal_state, ThermalState::EmergencyOffload);
@@ -1173,7 +1271,8 @@ mod tests {
             "batchSize": 512,
             "ubatchSize": 256
         });
-        let cfg: ModelLoadConfig = serde_json::from_value(value).expect("UI config should deserialize");
+        let cfg: ModelLoadConfig =
+            serde_json::from_value(value).expect("UI config should deserialize");
         assert_eq!(cfg.context_length, 8192);
         assert_eq!(cfg.batch_size, 512);
         assert!(cfg.manual_tensor_split.is_none());
