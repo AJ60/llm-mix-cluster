@@ -370,12 +370,16 @@ class RpcService : Service(), ComponentCallbacks2 {
     companion object {
         internal fun readFully(input: InputStream, buffer: ByteArray): Boolean {
             var total = 0
-            while (total < buffer.size) {
-                val read = input.read(buffer, total, buffer.size - total)
-                if (read < 0) return false
-                total += read
+            return try {
+                while (total < buffer.size) {
+                    val read = input.read(buffer, total, buffer.size - total)
+                    if (read < 0) return false
+                    total += read
+                }
+                true
+            } catch (_: java.io.IOException) {
+                false
             }
-            return true
         }
 
         const val DEFAULT_RPC_PORT = 50055
@@ -918,9 +922,8 @@ class RpcService : Service(), ComponentCallbacks2 {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.hasExtra(EXTRA_FORCE_EMBEDDED_RPC) == true) {
-            forceEmbeddedRpc = intent.getBooleanExtra(EXTRA_FORCE_EMBEDDED_RPC, false)
-        }
+        forceEmbeddedRpc = intent?.hasExtra(EXTRA_FORCE_EMBEDDED_RPC) == true &&
+            intent.getBooleanExtra(EXTRA_FORCE_EMBEDDED_RPC, false)
         if (intent?.hasExtra(EXTRA_RPC_PORT) == true) {
             rpcPortOverride = intent.getIntExtra(EXTRA_RPC_PORT, 0)
         }
@@ -1035,9 +1038,7 @@ class RpcService : Service(), ComponentCallbacks2 {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (se: SecurityException) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification)
-            } else {
+            if (runCatching { startForeground(NOTIFICATION_ID, notification) }.isFailure) {
                 appendLog("Foreground start rejected on API ${Build.VERSION.SDK_INT}: ${se.message}")
             }
         } catch (e: IllegalStateException) {
@@ -1068,7 +1069,7 @@ class RpcService : Service(), ComponentCallbacks2 {
             it.copy(
                 workerState = WorkerRunState.PROBING,
                 usbLoopbackOnly = usbOnly,
-                bindAddress = "0.0.0.0:${effectiveRpcPort()}",
+                bindAddress = "${if (usbOnly) "127.0.0.1" else "0.0.0.0"}:${effectiveRpcPort()}",
                 clusterSecret = clusterSecret
             )
         }
@@ -1137,7 +1138,7 @@ class RpcService : Service(), ComponentCallbacks2 {
         runCatching { serverSocket?.close() }
         runCatching { nativeProcess?.destroyForcibly() }
 
-        val hostIp = if (forceEmbeddedRpc) "127.0.0.1" else "0.0.0.0"
+        val hostIp = if (forceEmbeddedRpc || usbOnly) "127.0.0.1" else "0.0.0.0"
         val (activeBin, nativeDir) = resolveNativeRpcBinary()
 
         rpcServerJob = serviceScope.launch(Dispatchers.IO) {
@@ -1342,6 +1343,8 @@ class RpcService : Service(), ComponentCallbacks2 {
                         env.remove("OMP_PROC_BIND")
                         env.remove("OMP_PLACES")
                         env.remove("SILICA_ARM_NEON_FASTPATH")
+                        env["SILICA_CLUSTER_SECRET"] = currentSnap.clusterSecret
+                        env["SILICA_SAFE_CAP_MB"] = loadDecision.safeRamCapMb.toString()
                         env.remove("SILICA_NEON_THREADS")
                         env.putAll(initPlan.processEnv)
 
@@ -2238,7 +2241,7 @@ class RpcService : Service(), ComponentCallbacks2 {
                     val storageStats = StatFs(applicationContext.filesDir.path)
                     put("storageTotalMb", storageStats.totalBytes / (1024L * 1024L))
                     put("storageFreeMb", storageStats.availableBytes / (1024L * 1024L))
-                    put("cpuUsagePct", 0.0)
+                    put("cpuUsagePct", HardwareProbe.readCpuUsagePct())
                     put("gpuUsagePct", 0.0)
                     put("linkType", if (isUsb || lanAdvertiseIp == "127.0.0.1") "USB-C Tunnel" else "Wi-Fi LAN")
                     val vkReady = curTel.vulkanProbePassed &&
@@ -2259,13 +2262,11 @@ class RpcService : Service(), ComponentCallbacks2 {
                     put("cacheStatus", cacheStats.statusLabel)
                 }
 
+                val loopbackRegisterUrl = "http://127.0.0.1:$httpPort/api/cluster/nodes/register"
                 val targetUrls = if (isUsb || host == "127.0.0.1") {
-                    listOf("http://127.0.0.1:3000/api/cluster/nodes/register")
+                    listOf(loopbackRegisterUrl)
                 } else {
-                    listOf(
-                        "http://$host:$httpPort/api/cluster/nodes/register",
-                        "http://127.0.0.1:3000/api/cluster/nodes/register"
-                    ).distinct()
+                    listOf("http://$host:$httpPort/api/cluster/nodes/register", loopbackRegisterUrl).distinct()
                 }
 
                 for (u in targetUrls) {
@@ -2903,11 +2904,26 @@ object HardwareProbe {
      * Scans readable non-root Linux/Android thermal zones (/sys/class/thermal/thermal_zoneN)
      * prioritizing internal SoC/CPU/skin/GPU sensors to capture real internal heat before battery lags.
      */
+    internal fun readCpuUsagePct(): Double {
+        fun sample(): Pair<Long, Long>? {
+            val line = File("/proc/stat").readLines().firstOrNull { it.startsWith("cpu ") } ?: return null
+            val fields = line.removePrefix("cpu ").split(Regex("\\s+")).mapNotNull { it.toLongOrNull() }
+            if (fields.size < 5) return null
+            return fields.sum() to (fields[3] + fields[4])
+        }
+        val first = sample() ?: return 0.0
+        Thread.sleep(100L)
+        val second = sample() ?: return 0.0
+        val total = second.first - first.first
+        val idle = second.second - first.second
+        if (total <= 0L) return 0.0
+        return ((1.0 - idle.toDouble() / total.toDouble()) * 100.0).coerceIn(0.0, 100.0)
+    }
+
     internal fun parseThermalZoneCelsius(raw: Long): Float? {
         val celsius = when {
             raw > 1000L -> raw / 1000.0f
-            raw > 150L -> raw / 10.0f
-            else -> raw.toFloat()
+            else -> raw / 10.0f
         }
         return if (celsius in 5.0f..85.0f) celsius else null
     }
@@ -2939,8 +2955,13 @@ object HardwareProbe {
             fun median(entries: List<Pair<Float, String>>): Pair<Float?, String?> {
                 if (entries.isEmpty()) return null to null
                 val sorted = entries.sortedBy { it.first }
-                val chosen = sorted[sorted.size / 2]
-                return chosen.first to chosen.second
+                val middle = sorted.size / 2
+                val value = if (sorted.size % 2 == 0) {
+                    (sorted[middle - 1].first + sorted[middle].first) / 2.0f
+                } else {
+                    sorted[middle].first
+                }
+                return value to sorted[middle].second
             }
 
             val preferredResult = median(preferred)

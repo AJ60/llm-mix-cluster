@@ -31,8 +31,8 @@ class RpcServiceWorkerTest {
     fun `thermal zone parser rejects bogus clamped soc sensor`() {
         assertEquals(27.0f, HardwareProbe.parseThermalZoneCelsius(27000)!!, 0.001f)
         assertEquals(37.0f, HardwareProbe.parseThermalZoneCelsius(37000)!!, 0.001f)
-        assertEquals(45.0f, HardwareProbe.parseThermalZoneCelsius(45)!!, 0.001f)
-        assertNull(HardwareProbe.parseThermalZoneCelsius(100))
+        assertEquals(45.0f, HardwareProbe.parseThermalZoneCelsius(450)!!, 0.001f)
+        assertNull(HardwareProbe.parseThermalZoneCelsius(950))
         assertNull(HardwareProbe.parseThermalZoneCelsius(95000))
     }
 
@@ -43,6 +43,14 @@ class RpcServiceWorkerTest {
         assertTrue(RpcService.readFully(ByteArrayInputStream(data), target))
         assertArrayEquals(data, target)
         assertFalse(RpcService.readFully(ByteArrayInputStream(byteArrayOf(1, 2)), ByteArray(4)))
+    }
+
+    @Test
+    fun `v10 reply matches cross-language golden bytes`() {
+        val nonce = byteArrayOf(7, 7, 7, 7, 7, 7, 7, 7)
+        val reply = RpcService.buildV10Reply("clusterd-default-hmac-key", nonce, 4096, 8, 64, 0)
+        val hex = java.util.HexFormat.of().formatHex(reply)
+        assertEquals("474755460a00000007070707070707074986b99623526de70010000000400008", hex)
     }
 
     @Test

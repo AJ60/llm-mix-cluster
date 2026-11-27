@@ -275,6 +275,21 @@ int main() {
         assert(report.find("rpc_backend_driver_reliable=0") != std::string::npos);
     }
 
+    {
+        const uint8_t nonce[8] = {7, 7, 7, 7, 7, 7, 7, 7};
+        uint8_t request[32];
+        encode_v10_request("clusterd-default-hmac-key", nonce, request);
+        char hex[65];
+        for (int i = 0; i < 32; ++i) {
+            std::snprintf(hex + i * 2, 3, "%02x", request[i]);
+        }
+        assert(std::string(hex) == "4e4f4e4307070707070707077fcd7ffc7386fe0d9023f4b94e50b2d63ecd172c");
+
+        uint8_t wrong[32];
+        encode_v10_request("wrong-secret", nonce, wrong);
+        assert(std::memcmp(request + 12, wrong + 12, 20) != 0);
+    }
+
     std::cout << "All rpc_server.cpp Vulkan PhysicalDeviceProperties & ARMv8.0-A NEON tests passed!" << std::endl;
     return 0;
 }

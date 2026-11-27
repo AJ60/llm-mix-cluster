@@ -23,6 +23,13 @@
 #include <vector>
 
 #if defined(__linux__) || defined(__ANDROID__)
+#include <arpa/inet.h>
+#include <cerrno>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
+#if defined(__linux__) || defined(__ANDROID__)
 #include <dlfcn.h>
 #include <unistd.h>
 #endif
@@ -904,6 +911,230 @@ inline RpcBackendConfig initialize_rpc_server_backend(
 
 } // namespace silica
 
+
+namespace silica {
+
+inline uint64_t rotate_left64(uint64_t value, uint32_t count) {
+    return (value << count) | (value >> (64 - count));
+}
+
+inline uint64_t rotate_right64(uint64_t value, uint32_t count) {
+    return (value >> count) | (value << (64 - count));
+}
+
+inline void cluster_auth_token(
+    const std::string& secret,
+    const uint8_t* challenge,
+    size_t challenge_len,
+    uint8_t out[32]
+) {
+    uint64_t state[4] = {
+        0x6a09e667f3bcc908ULL,
+        0xbb67ae8584caa73bULL,
+        0x3c6ef372fe94f82bULL,
+        0xa54ff53a5f1d36f1ULL
+    };
+    const size_t total = secret.size() + challenge_len;
+    for (size_t i = 0; i < total; ++i) {
+        const uint64_t byte = i < secret.size()
+            ? static_cast<uint8_t>(secret[i])
+            : challenge[i - secret.size()];
+        const uint32_t lane = static_cast<uint32_t>(i & 3U);
+        const uint32_t next_lane = (lane + 1U) & 3U;
+        const uint64_t mixed = rotate_left64(
+            state[lane] + byte * 0x9e3779b97f4a7c15ULL,
+            13
+        );
+        state[lane] = mixed ^ state[next_lane];
+    }
+    for (uint64_t round = 0; round < 8; ++round) {
+        for (uint32_t lane = 0; lane < 4; ++lane) {
+            state[lane] = rotate_right64(
+                state[lane] * 0xbf58476d1ce4e5b9ULL + round,
+                17
+            );
+        }
+    }
+    for (uint32_t word = 0; word < 4; ++word) {
+        for (uint32_t byte = 0; byte < 8; ++byte) {
+            out[word * 8 + byte] = static_cast<uint8_t>(state[word] >> (byte * 8));
+        }
+    }
+}
+
+inline void put_le32(uint8_t* out, uint32_t value) {
+    out[0] = static_cast<uint8_t>(value);
+    out[1] = static_cast<uint8_t>(value >> 8);
+    out[2] = static_cast<uint8_t>(value >> 16);
+    out[3] = static_cast<uint8_t>(value >> 24);
+}
+
+inline uint32_t get_le32(const uint8_t* data) {
+    return static_cast<uint32_t>(data[0])
+        | (static_cast<uint32_t>(data[1]) << 8)
+        | (static_cast<uint32_t>(data[2]) << 16)
+        | (static_cast<uint32_t>(data[3]) << 24);
+}
+
+inline void encode_v10_request(
+    const std::string& secret,
+    const uint8_t nonce[8],
+    uint8_t out[32]
+) {
+    static const uint8_t prefix[] = {'G','G','U','F','_','P','R','O','B','E','_','V','1','0'};
+    std::vector<uint8_t> challenge(sizeof(prefix) + 8);
+    std::memcpy(challenge.data(), prefix, sizeof(prefix));
+    std::memcpy(challenge.data() + sizeof(prefix), nonce, 8);
+    uint8_t token[32];
+    cluster_auth_token(secret, challenge.data(), challenge.size(), token);
+    std::memcpy(out, "NONC", 4);
+    std::memcpy(out + 4, nonce, 8);
+    std::memcpy(out + 12, token, 20);
+}
+
+inline void encode_v10_reply(
+    const std::string& secret,
+    const uint8_t nonce[8],
+    uint32_t safe_cap_mb,
+    uint8_t big_cores,
+    uint16_t flags,
+    uint8_t status,
+    uint8_t out[32]
+) {
+    static const uint8_t prefix[] = {'G','G','U','F','_','R','E','P','L','Y','_','V','1','0'};
+    std::vector<uint8_t> transcript(sizeof(prefix) + 8 + 4 + 1 + 2 + 1);
+    size_t cursor = 0;
+    std::memcpy(transcript.data(), prefix, sizeof(prefix));
+    cursor += sizeof(prefix);
+    std::memcpy(transcript.data() + cursor, nonce, 8);
+    cursor += 8;
+    put_le32(transcript.data() + cursor, safe_cap_mb);
+    cursor += 4;
+    transcript[cursor++] = big_cores;
+    put_le32(transcript.data() + cursor, flags);
+    cursor += 4;
+    transcript[cursor] = status;
+    uint8_t token[32];
+    cluster_auth_token(secret, transcript.data(), transcript.size(), token);
+
+    std::memcpy(out, "GGUF", 4);
+    put_le32(out + 4, 10);
+    std::memcpy(out + 8, nonce, 8);
+    for (uint32_t i = 0; i < 8; ++i) {
+        out[16 + i] = token[8 + i] ^ token[24 + i];
+    }
+    put_le32(out + 24, safe_cap_mb);
+    put_le32(out + 28, static_cast<uint32_t>(status)
+        | (static_cast<uint32_t>(flags) << 8)
+        | (static_cast<uint32_t>(big_cores) << 24));
+}
+
+inline bool write_all(int fd, const uint8_t* data, size_t length) {
+    size_t sent = 0;
+    while (sent < length) {
+        const ssize_t written = send(fd, data + sent, length - sent, 0);
+        if (written <= 0) return false;
+        sent += static_cast<size_t>(written);
+    }
+    return true;
+}
+
+inline bool read_exact(int fd, uint8_t* data, size_t length) {
+    size_t received = 0;
+    while (received < length) {
+        const ssize_t count = recv(fd, data + received, length - received, 0);
+        if (count <= 0) return false;
+        received += static_cast<size_t>(count);
+    }
+    return true;
+}
+
+inline bool serve_v10_client(
+    int client,
+    const std::string& secret,
+    uint32_t safe_cap_mb,
+    uint8_t big_cores,
+    uint16_t flags,
+    uint8_t status
+) {
+    uint8_t request[32];
+    if (!read_exact(client, request, sizeof(request))) return false;
+    if (std::memcmp(request, "NONC", 4) != 0) return false;
+
+    uint8_t expected[32];
+    encode_v10_request(secret, request + 4, expected);
+    if (std::memcmp(request + 12, expected + 12, 20) != 0) return false;
+
+    uint8_t reply[32];
+    encode_v10_reply(secret, request + 4, safe_cap_mb, big_cores, flags, status, reply);
+    if (!write_all(client, reply, sizeof(reply))) return false;
+
+    uint8_t header[8];
+    if (!read_exact(client, header, sizeof(header))) return true;
+    if (std::memcmp(header, "BWPR", 4) != 0) return true;
+    const uint32_t length = get_le32(header + 4);
+    if (length == 0 || length > 4U * 1024U * 1024U) return true;
+    std::vector<uint8_t> payload(length);
+    if (!read_exact(client, payload.data(), payload.size())) return true;
+    uint8_t reply_header[8];
+    std::memcpy(reply_header, "BWOK", 4);
+    put_le32(reply_header + 4, length);
+    write_all(client, reply_header, sizeof(reply_header));
+    write_all(client, payload.data(), payload.size());
+    return true;
+}
+
+inline int run_v10_rpc_server(
+    const std::string& host,
+    int port,
+    const std::string& secret,
+    uint32_t safe_cap_mb,
+    uint8_t big_cores,
+    uint16_t flags,
+    uint8_t status
+) {
+#if defined(__linux__) || defined(__ANDROID__)
+    const int server = socket(AF_INET, SOCK_STREAM, 0);
+    if (server < 0) return 1;
+    int enabled = 1;
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(static_cast<uint16_t>(port));
+    address.sin_addr.s_addr = host.empty() || host == "0.0.0.0"
+        ? htonl(INADDR_ANY)
+        : inet_addr(host.c_str());
+    if (bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        close(server);
+        return 2;
+    }
+    listen(server, 16);
+    while (true) {
+        sockaddr_in peer{};
+        socklen_t peer_len = sizeof(peer);
+        const int client = accept(server, reinterpret_cast<sockaddr*>(&peer), &peer_len);
+        if (client < 0) continue;
+        timeval timeout{};
+        timeout.tv_sec = 4;
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        serve_v10_client(client, secret, safe_cap_mb, big_cores, flags, status);
+        close(client);
+    }
+#else
+    (void)host;
+    (void)port;
+    (void)secret;
+    (void)safe_cap_mb;
+    (void)big_cores;
+    (void)flags;
+    (void)status;
+    return 0;
+#endif
+}
+
+} // namespace silica
+
 // -----------------------------------------------------------------------------
 // JNI Bridge for Android RpcService.kt (com.example.service.NativeVulkanBridge)
 // -----------------------------------------------------------------------------
@@ -931,10 +1162,19 @@ int main(int argc, char** argv) {
     int32_t threads = 0; // 0 = auto-select optimal multi-threaded NEON core budget
     bool force_cpu = false;
     bool probe_only = false;
+    std::string host = "0.0.0.0";
+    int port = 50055;
+    std::string secret = "clusterd-default-hmac-key";
 
     for (int i = 1; i < argc; ++i) {
         if ((std::strcmp(argv[i], "-t") == 0 || std::strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
             threads = std::max<int32_t>(1, std::atoi(argv[++i]));
+        } else if ((std::strcmp(argv[i], "-H") == 0 || std::strcmp(argv[i], "--host") == 0) && i + 1 < argc) {
+            host = argv[++i];
+        } else if ((std::strcmp(argv[i], "-p") == 0 || std::strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
+            port = std::max(1, std::atoi(argv[++i]));
+        } else if ((std::strcmp(argv[i], "-s") == 0 || std::strcmp(argv[i], "--secret") == 0) && i + 1 < argc) {
+            secret = argv[++i];
         } else if (std::strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             if (silica::to_lower_ascii(argv[++i]) == "cpu") {
                 force_cpu = true;
@@ -954,9 +1194,20 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // In full llama.cpp NDK builds, llama_rpc_start_server() binds here with:
-    //   backend = cfg.gpu_backend_enabled ? ggml_backend_vk_init(0) : ggml_backend_cpu_init()
-    //   ggml_backend_cpu_set_n_threads(backend, cfg.cpu_threads)
-    return 0;
+    const char* env_secret = std::getenv("SILICA_CLUSTER_SECRET");
+    if (env_secret != nullptr && env_secret[0] != '\0') secret = env_secret;
+    const char* env_cap = std::getenv("SILICA_SAFE_CAP_MB");
+    const uint32_t safe_cap_mb = env_cap != nullptr
+        ? static_cast<uint32_t>(std::max(256, std::atoi(env_cap)))
+        : 2048U;
+    const char* env_tier = std::getenv("SILICA_THERMAL_TIER");
+    const std::string tier = env_tier == nullptr ? "" : env_tier;
+    const uint8_t status = tier == "shed_layers" ? 2 : (tier == "throttle" ? 1 : 0);
+    uint16_t flags = 0;
+    if (cfg.gpu_backend_enabled) flags |= 1U;
+    if (std::getenv("SILICA_ARM_NEON_FASTPATH") != nullptr) flags |= (1U << 6);
+    const uint8_t cores = static_cast<uint8_t>(std::max(1, cfg.cpu_threads));
+
+    return silica::run_v10_rpc_server(host, port, secret, safe_cap_mb, cores, flags, status);
 }
 #endif
