@@ -43,6 +43,7 @@ use history::{ClusterHistoryStore, RunObservation};
 use planner::{compute_cluster_plan, LinkTransport, LiveNodeInput, ModelLoadConfig, NodeOs};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use speculative::{validate_draft_vocab, SpeculativeMode};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -64,6 +65,7 @@ struct AppState {
     cluster_mode: Arc<RwLock<String>>,
     http_client: reqwest::Client,
     api_token: Option<String>,
+    cluster_secret: String,
     benchmarks: Arc<RwLock<Vec<serde_json::Value>>>,
     failover_url: Arc<RwLock<Option<String>>>,
     hw_cache: Arc<RwLock<Option<(std::time::Instant, hardware::HostHardwareSnapshot)>>>,
@@ -166,6 +168,16 @@ async fn cached_adb_serials(state: &AppState) -> Vec<String> {
         .unwrap_or_default();
     *state.adb_cache.write().await = Some((now, serials.clone()));
     serials
+}
+
+fn merge_load_config(base: &ModelLoadConfig, patch: &serde_json::Value) -> ModelLoadConfig {
+    let mut value = serde_json::to_value(base).unwrap_or_else(|_| serde_json::json!({}));
+    if let (Some(target), Some(patch_object)) = (value.as_object_mut(), patch.as_object()) {
+        for (key, item) in patch_object {
+            target.insert(key.clone(), item.clone());
+        }
+    }
+    serde_json::from_value(value).unwrap_or_else(|_| base.clone())
 }
 
 async fn inspect_context(state: &AppState) -> (u32, String) {
@@ -327,14 +339,27 @@ async fn reload_model_handler(
             );
         }
     };
-    let cfg_from_request: Option<ModelLoadConfig> = req
-        .config
-        .and_then(|v| serde_json::from_value(v).ok());
-    let (ctx, kvq) = match &cfg_from_request {
-        Some(config) => (config.context_length, config.kv_cache_quant.clone()),
-        None => inspect_context(&state).await,
+    let current_cfg = state.load_config.read().await.clone();
+    let cfg: ModelLoadConfig = match req.config {
+        Some(patch) => merge_load_config(&current_cfg, &patch),
+        None => {
+            let (ctx, kvq) = inspect_context(&state).await;
+            match inspect_gguf_file(PathBuf::from(&model_path).as_path(), ctx, &kvq) {
+                Ok(card) => ModelLoadConfig::for_card(&card),
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "ok": false, "error": e })),
+                    );
+                }
+            }
+        }
     };
-    let card = match inspect_gguf_file(PathBuf::from(&model_path).as_path(), ctx, &kvq) {
+    let card = match inspect_gguf_file(
+        PathBuf::from(&model_path).as_path(),
+        cfg.context_length,
+        &cfg.kv_cache_quant,
+    ) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -343,7 +368,27 @@ async fn reload_model_handler(
             );
         }
     };
-    let cfg: ModelLoadConfig = cfg_from_request.unwrap_or_else(|| ModelLoadConfig::for_card(&card));
+    if cfg.speculative_mode == SpeculativeMode::ExternalDraft {
+        if let Some(ref draft_path) = cfg.draft_model_path {
+            match inspect_gguf_file(PathBuf::from(draft_path).as_path(), 4096, "q8_0") {
+                Ok(draft_card) => {
+                    let check = validate_draft_vocab(&card, &draft_card);
+                    if !check.compatible {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({ "ok": false, "error": check.reason })),
+                        );
+                    }
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "ok": false, "error": format!("Draft GGUF inspect failed: {}", e) })),
+                    );
+                }
+            }
+        }
+    }
 
     let hw = cached_hardware(&state).await;
     let master_os = match hw.os_name.as_str() {
@@ -1259,19 +1304,7 @@ async fn tuning_auto_apply_handler(
         .get("tuningConfig")
         .or_else(|| payload.get("patch"))
         .unwrap_or(&payload);
-    if let Ok(updated) = serde_json::from_value::<ModelLoadConfig>(patch_source.clone()) {
-        cfg = updated;
-    } else if let Some(patch) = patch_source.as_object() {
-        let mut value = serde_json::to_value(&cfg).unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(base) = value.as_object_mut() {
-            for (key, item) in patch {
-                base.insert(key.clone(), item.clone());
-            }
-        }
-        if let Ok(updated) = serde_json::from_value::<ModelLoadConfig>(value) {
-            cfg = updated;
-        }
-    }
+    cfg = merge_load_config(&cfg, patch_source);
     *state.load_config.write().await = cfg;
     Json(serde_json::json!({
         "ok": true,
@@ -1487,7 +1520,7 @@ async fn wifi_status_handler() -> impl IntoResponse {
 }
 
 async fn wifi_qr_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let payload = format!("clusterd://pair?master=127.0.0.1:{}&rpc=50055&secret=clusterd-default-hmac-key", state.port);
+    let payload = format!("clusterd://pair?master=127.0.0.1:{}&rpc=50055&secret={}", state.port, state.cluster_secret);
     let crc = crc8(payload.as_bytes());
     let mut matrix = vec![vec![false; 21]; 21];
     for (i, b) in payload.bytes().enumerate().take(21 * 21) {
@@ -1513,7 +1546,11 @@ fn crc8(data: &[u8]) -> u8 {
 
 async fn wifi_connect_handler(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
     let raw = payload.get("rawPayload").and_then(|v| v.as_str()).unwrap_or("");
-    if raw.starts_with("clusterd://pair?") && raw.len() > 20 {
+    let expected_crc = payload
+        .get("crc8Hex")
+        .and_then(|v| v.as_str())
+        .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+    if raw.starts_with("clusterd://pair?") && raw.len() > 20 && expected_crc == Some(crc8(raw.as_bytes())) {
         (StatusCode::OK, Json(serde_json::json!({ "ok": true, "message": "P2P payload verified (CRC-8)" })))
     } else {
         (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": "Invalid P2P payload" })))
@@ -1525,9 +1562,20 @@ async fn upstream_test_handler(
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let valid = match tools::validate_public_http_url(url) {
-        Ok(u) => u,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e }))),
+    let local_upstream = url.starts_with("http://127.0.0.1:8080")
+        || url.starts_with("http://localhost:8080")
+        || url.starts_with("http://127.0.0.1:11434")
+        || url.starts_with("http://localhost:11434");
+    let valid = if local_upstream {
+        match reqwest::Url::parse(url) {
+            Ok(u) => u,
+            Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e.to_string() }))),
+        }
+    } else {
+        match tools::validate_public_http_url(url) {
+            Ok(u) => u,
+            Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "ok": false, "error": e }))),
+        }
     };
     let apply = payload.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
     if apply {
@@ -1547,12 +1595,18 @@ async fn failover_config_handler(
 
 async fn network_audit_handler(State(state): State<AppState>) -> impl IntoResponse {
     let nodes = state.registry.active_verified_workers().await;
+    let avg_rtt = if nodes.is_empty() {
+        0.0
+    } else {
+        nodes.iter().map(|n| n.rtt_p95_ms).sum::<f64>() / nodes.len() as f64
+    };
     Json(serde_json::json!({
         "hostIp": "127.0.0.1",
-        "summary": { "clusterRating": "healthy", "avgRttMs": 0.0 },
+        "summary": { "clusterRating": "healthy", "avgRttMs": (avg_rtt * 10.0).round() / 10.0 },
         "nodes": nodes.iter().map(|n| serde_json::json!({
             "nodeId": n.node_id, "label": n.label, "ip": n.ip,
-            "linkType": format!("{:?}", n.transport), "rttMs": n.rtt_p95_ms, "status": "online"
+            "linkType": format!("{:?}", n.transport), "rttMs": n.rtt_p95_ms,
+            "bandwidthMbps": n.bandwidth_mbps, "packetLossPct": n.pkt_loss_pct, "status": "online"
         })).collect::<Vec<_>>()
     }))
 }
@@ -1676,6 +1730,7 @@ async fn main() {
             .build()
             .expect("reqwest client"),
         api_token,
+        cluster_secret: cluster_secret.clone(),
         benchmarks: Arc::new(RwLock::new(Vec::new())),
         failover_url: Arc::new(RwLock::new(None)),
         hw_cache: Arc::new(RwLock::new(None)),
@@ -1739,4 +1794,25 @@ async fn main() {
         .expect("Failed to bind clusterd HTTP listener");
     tracing::info!("Silica Cluster pure-Rust Master running on http://{}:{}", bind_host, port);
     axum::serve(listener, app).await.expect("clusterd server error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tuning_patch_preserves_unrelated_fields() {
+        let base = ModelLoadConfig::default();
+        let patch = serde_json::json!({ "contextLength": 8192 });
+        let merged = merge_load_config(&base, &patch);
+        assert_eq!(merged.context_length, 8192);
+        assert_eq!(merged.batch_size, base.batch_size);
+        assert_eq!(merged.slot_save_path, base.slot_save_path);
+    }
+
+    #[test]
+    fn crc8_is_stable_for_pairing_payload() {
+        assert_eq!(crc8(b"clusterd://pair?master=127.0.0.1:3000"), crc8(b"clusterd://pair?master=127.0.0.1:3000"));
+        assert_ne!(crc8(b"clusterd://pair?master=127.0.0.1:3000"), crc8(b"clusterd://pair?master=127.0.0.1:3001"));
+    }
 }

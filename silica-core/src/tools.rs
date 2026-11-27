@@ -61,11 +61,16 @@ pub fn validate_public_http_url(raw: &str) -> Result<Url, String> {
 
     // DNS check: reject if any resolved address falls inside a blocked range.
     let port = parsed.port_or_known_default().unwrap_or(443);
-    if let Ok(addrs) = (host, port).to_socket_addrs() {
-        for addr in addrs {
-            if is_blocked_ip(addr.ip()) {
-                return Err("Hostname resolves to a blocked private/loopback address".to_string());
-            }
+    let addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| "Hostname resolution failed".to_string())?
+        .collect();
+    if addrs.is_empty() {
+        return Err("Hostname resolved to no addresses".to_string());
+    }
+    for addr in addrs {
+        if is_blocked_ip(addr.ip()) {
+            return Err("Hostname resolves to a blocked private/loopback address".to_string());
         }
     }
 

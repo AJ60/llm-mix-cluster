@@ -111,6 +111,8 @@ impl ClusterHistoryStore {
             entry.recommended_ubatch = obs.ubatch_size.clamp(64, 512);
         }
 
+        entry.learned_kv_offload = obs.used_nkvo;
+
         if obs.oom_or_fail {
             entry.oom_events += 1;
             entry.learned_kv_offload = true;

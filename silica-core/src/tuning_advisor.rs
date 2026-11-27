@@ -225,7 +225,7 @@ pub fn analyze(
         let headroom = input.map(|n| n.thermal_headroom).unwrap_or(0.0);
         let raw_cores = as_u32(plan_node.get("physicalCores"), 4).max(2);
         let base = if is_android {
-            raw_cores.min(6).max(if raw_cores >= 6 { 6 } else { raw_cores + 2 })
+            raw_cores.min(6).max(2)
         } else {
             raw_cores.min(12).max(2)
         };
@@ -312,7 +312,18 @@ pub fn analyze(
             )
         } else {
             let threads = if alf.capped { base.min(alf.cap) } else { base };
-            let ram_pct = if alf.capped { (75.0 * alf.factor).round().max(50.0) as u32 } else { 75 };
+            let floor = if alf.band == "critical_shed" {
+                25.0
+            } else if alf.band == "hot_throttle" {
+                35.0
+            } else {
+                50.0
+            };
+            let ram_pct = if alf.capped {
+                (75.0 * alf.factor).round().max(floor) as u32
+            } else {
+                75
+            };
             let ctx = if alf.band == "hot_throttle" || alf.band == "critical_shed" {
                 cfg.context_length.min(2048)
             } else {

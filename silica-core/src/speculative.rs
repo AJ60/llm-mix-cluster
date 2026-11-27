@@ -64,7 +64,7 @@ pub fn prompt_lookup_ngram(tokens: &[u32], ngram_size: usize, max_draft: usize) 
     for pos in (0..search_limit).rev() {
         if &tokens[pos..pos + ngram_size] == needle {
             let start = pos + ngram_size;
-            let end = (start + max_draft).min(tokens.len() - ngram_size);
+            let end = (start + max_draft).min(tokens.len());
             if end > start {
                 return tokens[start..end].to_vec();
             }

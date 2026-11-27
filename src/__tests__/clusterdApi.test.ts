@@ -77,10 +77,18 @@ describe('clusterd canonical HTTP API', () => {
       await fetch(`${harness.baseUrl}/api/network/wifi-direct/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawPayload: qr.qr.rawPayload }),
+        body: JSON.stringify({ rawPayload: qr.qr.rawPayload, crc8Hex: qr.qr.crc8Hex }),
       })
     ).json();
     assert.equal(connect.ok, true);
+    const rejected = await (
+      await fetch(`${harness.baseUrl}/api/network/wifi-direct/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawPayload: qr.qr.rawPayload, crc8Hex: 'FF' }),
+      })
+    ).json();
+    assert.equal(rejected.ok, false);
   });
 
   it('returns a JSON 404 for unknown API endpoints on any method', async () => {

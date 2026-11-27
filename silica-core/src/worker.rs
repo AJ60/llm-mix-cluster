@@ -134,11 +134,11 @@ pub async fn run_worker_mode(opts: WorkerCliOptions) -> Result<(), String> {
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Shutdown signal received — unregistering worker {} immediately", node_id);
-                let _ = client
+                let mut req = client
                     .post(format!("{}/api/cluster/nodes/unregister", master_base))
-                    .json(&serde_json::json!({ "id": node_id }))
-                    .send()
-                    .await;
+                    .json(&serde_json::json!({ "id": node_id }));
+                if let Some(ref token) = api_token { req = req.bearer_auth(token); }
+                let _ = req.send().await;
                 if let Some(mut c) = rpc_child.take() {
                     let _ = c.kill();
                     let _ = c.wait();

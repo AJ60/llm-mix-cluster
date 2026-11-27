@@ -80,12 +80,14 @@ impl ActiveTurnTracker {
             return true;
         }
         tokio::time::timeout(max_wait, async {
+            let notified = self.drained_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             loop {
-                let notified = self.drained_notify.notified();
                 if self.active_count.load(Ordering::Acquire) == 0 {
                     break;
                 }
-                notified.await;
+                notified.as_mut().await;
             }
         })
         .await
@@ -222,7 +224,9 @@ impl EngineSupervisor {
         if let Some(index) = cli_args.iter().position(|arg| arg == "--slot-save-path") {
             if let Some(path) = cli_args.get(index + 1) {
                 if !path.is_empty() {
-                    let _ = fs::create_dir_all(path);
+                    fs::create_dir_all(path).map_err(|e| {
+                        format!("Cannot create slot save path {}: {}", path, e)
+                    })?;
                 }
             }
         }

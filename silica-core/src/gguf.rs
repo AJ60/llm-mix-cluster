@@ -458,7 +458,11 @@ pub fn inspect_gguf_file(
     };
 
     // Exact per-layer GQA KV cache formula: 2 (K+V) * head_count_kv * head_dim * ctx * kv_bytes
-    let head_dim = (embedding_length as f64 / head_count as f64).max(64.0);
+    let head_dim = if head_count > 0 {
+        embedding_length as f64 / head_count as f64
+    } else {
+        128.0
+    };
     let kv_bpe = kv_bytes_per_elem(kv_quant);
     let eff_ctx = target_context.min(context_length.max(4096)) as f64;
     let per_layer_kv_mb =
@@ -466,7 +470,7 @@ pub fn inspect_gguf_file(
 
     let fallback_layer_mb = (file_size_mb * 0.90) / block_count as f64;
     let mut per_layer_profiles = Vec::with_capacity(block_count as usize);
-    let exact_tensor_table = parsed_tensors == tensor_count.min(32768);
+    let exact_tensor_table = kv_count <= 4096 && tensor_count <= 32768 && parsed_tensors == tensor_count;
     for i in 0..block_count as usize {
         let (attn_mb, ffn_mb) = if exact_tensor_table && (layer_attn_bytes[i] + layer_ffn_bytes[i]) > 0.0 {
             (

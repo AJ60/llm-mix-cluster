@@ -612,10 +612,13 @@ pub fn compute_cluster_plan(
         .collect();
 
     let weight_sum: f64 = raw_weights.iter().map(|(_, w)| *w).sum::<f64>().max(1e-6);
-    let total_layer_budget_mb = total_layer_weights_mb + total_kv_mb;
-
     let total_layers = profiles.len() as u32;
-    let mb_per_layer = (card.file_size_mb / total_layers.max(1) as f64).max(1.0);
+    let mb_per_layer = if profiles.is_empty() {
+        (card.file_size_mb / total_layers.max(1) as f64).max(1.0)
+    } else {
+        (profiles.iter().map(|p| p.total_weight_mb + p.kv_cache_mb).sum::<f64>()
+            / profiles.len() as f64).max(1.0)
+    };
     
     // Master gets first slice [0, master_layers - 1], workers get contiguous subsequent slices
     let master_idx = active_indices.first().copied().unwrap_or(0);
@@ -679,28 +682,23 @@ pub fn compute_cluster_plan(
                 .map(|p| p.total_weight_mb + p.kv_cache_mb)
                 .unwrap_or(0.0)
         };
-        let avg_layer_mb = if profiles.is_empty() {
-            0.0
-        } else {
-            profiles
-                .iter()
-                .map(|p| p.total_weight_mb + p.kv_cache_mb)
-                .sum::<f64>()
-                / profiles.len() as f64
-        };
         let used = allocations[last_active_idx]
             .layer_start
             .zip(allocations[last_active_idx].layer_end)
             .map(|(start, end)| (start..=end).map(&layer_mb).sum::<f64>())
             .unwrap_or(0.0);
-        let headroom = allocations[last_active_idx].safe_cap_mb
-            + allocations[last_active_idx].vram_safe_mb
-            - used;
-        let extra = if avg_layer_mb > 0.0 {
-            ((headroom / avg_layer_mb).floor().max(0.0) as u32).min(remaining)
-        } else {
-            remaining
-        };
+        let mut headroom = node_remaining_mb[last_active_idx] - used;
+        let mut extra = 0u32;
+        let mut cursor = cursor_layer;
+        while cursor < total_layers {
+            let cost = layer_mb(cursor);
+            if cost <= 0.0 || headroom < cost {
+                break;
+            }
+            headroom -= cost;
+            extra += 1;
+            cursor += 1;
+        }
         if extra > 0 {
             allocations[last_active_idx].layer_count += extra;
             allocations[last_active_idx].layer_end =
@@ -753,16 +751,28 @@ pub fn compute_cluster_plan(
     }
 
     if tensor_split.is_empty() && !active_indices.is_empty() {
-        let mut running = 0.0f64;
+        let count = active_indices.len();
+        let raw: Vec<f64> = if active_alloc_sum > 0.0 {
+            active_indices
+                .iter()
+                .map(|&idx| allocations[idx].alloc_mb)
+                .collect()
+        } else {
+            vec![1.0; count]
+        };
+        let raw_sum = raw.iter().sum::<f64>().max(1e-6);
+        let mut basis = Vec::with_capacity(count);
+        let mut used_basis = 0u64;
+        for k in 0..count.saturating_sub(1) {
+            let exact = (raw[k] / raw_sum * 10000.0).floor().max(0.0) as u64;
+            let reserved = (count - 1 - k) as u64;
+            let value = exact.min(10000u64.saturating_sub(used_basis).saturating_sub(reserved));
+            basis.push(value);
+            used_basis += value;
+        }
+        basis.push(10000u64.saturating_sub(used_basis));
         for (k, &idx) in active_indices.iter().enumerate() {
-            let pct = if k == active_indices.len() - 1 {
-                (100.0 - running).max(0.0)
-            } else if active_alloc_sum > 0.0 {
-                ((allocations[idx].alloc_mb / active_alloc_sum) * 1000.0).round() / 10.0
-            } else {
-                (100.0 / active_indices.len() as f64 * 10.0).round() / 10.0
-            };
-            running += pct;
+            let pct = basis[k] as f64 / 100.0;
             allocations[idx].tensor_split_pct = pct;
             tensor_split.push(pct);
         }
@@ -868,13 +878,21 @@ pub fn compute_cluster_plan(
         cli_args.push(mmproj.clone());
     }
 
-    let ngl = cfg.gpu_offload_layers.unwrap_or_else(|| {
-        if master_vram_total > 0.0 {
-            card.block_count
-        } else {
-            0
-        }
-    });
+    let master_vram_safe = allocations[master_idx].vram_safe_mb;
+    let avg_layer_weight_mb = if profiles.is_empty() {
+        0.0
+    } else {
+        profiles.iter().map(|p| p.total_weight_mb).sum::<f64>() / profiles.len() as f64
+    };
+    let auto_ngl = if master_vram_safe > 0.0 && avg_layer_weight_mb > 0.0 {
+        (master_vram_safe / avg_layer_weight_mb).floor() as u32
+    } else {
+        0
+    };
+    let ngl = cfg
+        .gpu_offload_layers
+        .unwrap_or(auto_ngl)
+        .min(card.block_count);
     cli_args.push("-ngl".to_string());
     cli_args.push(ngl.to_string());
 

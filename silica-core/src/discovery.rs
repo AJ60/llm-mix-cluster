@@ -125,16 +125,16 @@ impl WorkerRegistry {
             mem_bw_gbps: req.mem_bw_gbps.unwrap_or(28.0),
             big_cores: req.big_cores.unwrap_or(frame.big_cores).max(1),
             rtt_p95_ms: link.rtt_p95_ms,
-            bandwidth_mbps: req.link_bandwidth_mbps.unwrap_or(if link.bandwidth_mbps > 0.0 {
+            bandwidth_mbps: if link.bandwidth_mbps > 0.0 {
                 link.bandwidth_mbps
             } else {
-                match transport {
+                req.link_bandwidth_mbps.unwrap_or(match transport {
                     LinkTransport::UsbC | LinkTransport::UsbRndis => 480.0,
                     LinkTransport::Ethernet25G => 2500.0,
                     _ => 220.0,
-                }
-            }),
-            pkt_loss_pct: req.pkt_loss_pct.unwrap_or(link.pkt_loss_pct),
+                })
+            },
+            pkt_loss_pct: link.pkt_loss_pct,
             temp_c: req.temp_c.unwrap_or(34.0),
             thermal_headroom: req.thermal_headroom.unwrap_or(0.25),
             cpu_usage_pct: req.cpu_usage_pct.unwrap_or(0.0),
