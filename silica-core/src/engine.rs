@@ -8,6 +8,7 @@
 
 use crate::planner::validate_stock_llama_cpp_flags;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -217,6 +218,14 @@ impl EngineSupervisor {
         let _ = self
             .events_tx
             .send(format!("Spawning {} {}", binary, cli_args.join(" ")));
+
+        if let Some(index) = cli_args.iter().position(|arg| arg == "--slot-save-path") {
+            if let Some(path) = cli_args.get(index + 1) {
+                if !path.is_empty() {
+                    let _ = fs::create_dir_all(path);
+                }
+            }
+        }
 
         let spawn_result = Command::new(binary)
             .args(&cli_args)

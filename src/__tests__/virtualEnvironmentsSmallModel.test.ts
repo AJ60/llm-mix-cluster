@@ -121,8 +121,8 @@ describe('Data-Driven Auto-Planner Hard Mathematical Invariants', () => {
     const plan = planStarCluster([master4Gb, slowWifi, piNode], smallModel);
     assert.equal(plan.nodes.find((n) => n.nodeId === 'slow-wifi-phone')?.pruned, true);
     assert.equal(plan.nodes.find((n) => n.nodeId === 'rpi-edge')?.pruned, true);
-    assert.equal(plan.useNoMmap, true, 'Pool >= 1.15x model need must enable --no-mmap');
-    assert.ok(plan.cliArgs.includes('--no-mmap'));
+    assert.equal(plan.useNoMmap, true, 'Pool >= 1.15x model need must enable -lm none');
+    assert.ok(plan.cliArgs.includes('-lm'));
   });
 
   it('sheds overheated Android workers to 0 layers and keeps mmap streaming when pool < 1.15x', () => {
@@ -141,7 +141,7 @@ describe('Data-Driven Auto-Planner Hard Mathematical Invariants', () => {
     assert.equal(phone.thermalStatus.state, 'EMERGENCY_OFFLOAD');
     assert.equal(plan.useNoMmap, false);
     assert.equal(plan.mmapStreaming, true);
-    assert.ok(!plan.cliArgs.includes('--no-mmap'));
+    assert.ok(!plan.cliArgs.includes('-lm'));
   });
 
   it('NEVER displays offline or unverified workers in LIVE_CLUSTER mode', () => {

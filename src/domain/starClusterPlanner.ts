@@ -459,7 +459,7 @@ export function buildStarClusterNodes(
  * - Strict 50% Android physical RAM cap.
  * - Normalized cap-bounded `--tensor-split` summing to 100.0.
  * - Auto-prunes slow/lossy Wi-Fi (>40ms RTT or >1.5% loss) & Edge ARM SBCs when Master+USB fits.
- * - Smart `--no-mmap` ONLY when `totalSafePoolMb >= neededMb * 1.15`.
+ * - Smart `-lm none` ONLY when `totalSafePoolMb >= neededMb * 1.15`.
  * - Automatic `-nkvo` on <= 4 GB GPUs at 32K–131K context.
  */
 export function planStarCluster(
@@ -931,7 +931,7 @@ export function planStarCluster(
     if (autoNkvo && node.role === 'Master') flags.push('-nkvo');
     if (effectiveConfig.kvUnified !== false && node.role === 'Master') flags.push('--kv-unified');
     if (effectiveConfig.moeCpuOffload && model.architecture === 'MoE') flags.push('-ot .ffn_.*_exps.=CPU');
-    if (useNoMmap && node.role === 'Master') flags.push('--no-mmap');
+    if (useNoMmap && node.role === 'Master') flags.push('-lm', 'none');
     node.tuningFlags = flags;
   }
 
@@ -1093,7 +1093,7 @@ export function planStarCluster(
   if (effectiveConfig.slotSavePath?.trim()) cliArgs.push('--slot-save-path', effectiveConfig.slotSavePath.trim());
   if (effectiveConfig.contBatching !== false) cliArgs.push('--cont-batching');
   if ((effectiveConfig.cacheReuse ?? 256) > 0) cliArgs.push('--cache-reuse', String(effectiveConfig.cacheReuse ?? 256));
-  if (useNoMmap) cliArgs.push('--no-mmap');
+  if (useNoMmap) cliArgs.push('-lm', 'none');
   // Smart MoE Placement: Only emit blanket `-ot .ffn_.*_exps.=CPU` when offloading full-model attention (`cliNgl >= model.layers`)
   // or GPU-only 0-offload fallback. When `cliNgl < model.layers`, omitting blanket `.ffn_.*_exps.=CPU` keeps full MoE layers
   // (attention + experts) intact inside CUDA0 and RPC0, eliminating ~700 cross-bus graph splits/token and putting both GPUs/workers to work.

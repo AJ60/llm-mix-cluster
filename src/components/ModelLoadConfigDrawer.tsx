@@ -420,7 +420,7 @@ export const ModelLoadConfigDrawer: React.FC<ModelLoadConfigDrawerProps> = ({
                 onChange: (v: boolean) => onUpdateConfig({ moeCpuOffload: v }),
               },
               {
-                label: `Disable mmap (--no-mmap · auto ${plan.useNoMmap ? 'ON >=1.15x' : 'OFF <1.15x'})`,
+                label: `Disable mmap (-lm none · auto ${plan.useNoMmap ? 'ON >=1.15x' : 'OFF <1.15x'})`,
                 checked: config.forceNoMmap ?? plan.useNoMmap,
                 onChange: (v: boolean) => onUpdateConfig({ forceNoMmap: v }),
               },

@@ -42,7 +42,7 @@ export const ALLOWED_STOCK_LLAMA_CPP_FLAGS = new Set([
   '--ubatch-size',
   '--cont-batching',
   '--cache-reuse',
-  '--no-mmap',
+  '-lm',
   '--mlock',
   '--model-draft',
   '--draft-max',
@@ -218,7 +218,7 @@ export function buildTunedOsBackendProfile(
     cliFlags.push('-ot ".ffn_.*_exps.=CPU"');
   }
   if (plan.useNoMmap) {
-    cliFlags.push('--no-mmap');
+    cliFlags.push('-lm', 'none');
   }
   if (workerRpcAddrs.length > 0) {
     cliFlags.push(`--rpc ${workerRpcAddrs.join(',')}`);

@@ -6,7 +6,7 @@
 //! 3. Cap-Bounded `--tensor-split`: normalized ratios summing cleanly to 100.0.
 //! 4. Automatic pruning of slow/lossy Wi-Fi (>40ms p95 RTT or >1.5% loss) or Edge ARM SBC nodes
 //!    when Master + USB-C nodes already fit the model with safety margin.
-//! 5. Smart `mmap` switching: pass `--no-mmap` ONLY when `total_safe_pool >= model_need * 1.15`.
+//! 5. Smart `mmap` switching: pass `-lm none` ONLY when `total_safe_pool >= model_need * 1.15`.
 //! 6. Automatic `-nkvo` (CPU KV offload) for <= 4 GB GPUs when target context >= 32,768.
 //! 7. Master-pinned `--mmproj` vision projector + embedding/lm_head budget reservation.
 //! 8. Strict stock `llama.cpp v1.0.0` CLI flag allowlist (zero hallucinated flags).
@@ -363,7 +363,7 @@ pub fn validate_stock_llama_cpp_flags(args: &[String]) -> Result<(), String> {
         "-ub",
         "--cont-batching",
         "--cache-reuse",
-        "--no-mmap",
+        "-lm",
         "--model-draft",
         "--draft-max",
         "--lookup-cache-static",
@@ -577,7 +577,7 @@ pub fn compute_cluster_plan(
         .map(|&i| allocations[i].safe_cap_mb + allocations[i].vram_safe_mb)
         .sum();
 
-    // Smart mmap rule: ONLY pass `--no-mmap` when total_safe_pool >= model_need * 1.15.
+    // Smart mmap rule: ONLY pass `-lm none` when total_safe_pool >= model_need * 1.15.
     let use_no_mmap = cfg
         .force_no_mmap
         .unwrap_or(total_safe_pool_mb >= total_model_need_mb * 1.15);
@@ -910,7 +910,8 @@ pub fn compute_cluster_plan(
         }
     }
     if use_no_mmap {
-        cli_args.push("--no-mmap".to_string());
+        cli_args.push("-lm".to_string());
+        cli_args.push("none".to_string());
     }
     if cfg.moe_cpu_offload && card.arch_mode == ModelArchMode::MoE {
         cli_args.push("-ot".to_string());
@@ -1122,7 +1123,7 @@ mod tests {
         assert_eq!(hot.thermal_state, ThermalState::EmergencyOffload);
         // Pool easily >= 1.15x model need -> --no-mmap active
         assert!(plan.use_no_mmap);
-        assert!(plan.cli_args.contains(&"--no-mmap".to_string()));
+        assert!(plan.cli_args.contains(&"-lm".to_string()));
     }
 
     #[test]
@@ -1132,7 +1133,7 @@ mod tests {
         let plan = compute_cluster_plan(&card, &nodes, &ModelLoadConfig::default(), None);
         assert!(!plan.use_no_mmap);
         assert!(plan.mmap_streaming);
-        assert!(!plan.cli_args.contains(&"--no-mmap".to_string()));
+        assert!(!plan.cli_args.contains(&"-lm".to_string()));
     }
 
     #[test]
