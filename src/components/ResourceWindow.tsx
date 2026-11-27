@@ -54,8 +54,8 @@ export const ResourceWindow: React.FC<ResourceWindowProps> = ({ hardware, plan }
   const freeRamMb = hardware?.availableRamMb ?? 0;
   const ramUsedPct = totalRamMb > 0 ? ((totalRamMb - freeRamMb) / totalRamMb) * 100 : 0;
 
-  const storageTotalMb = hardware?.storageTotalMb ?? 0;
-  const storageFreeMb = hardware?.storageFreeMb ?? 0;
+  const storageTotalMb = hardware?.storageTotalMb ?? hardware?.host?.storage_total_mb ?? 0;
+  const storageFreeMb = hardware?.storageFreeMb ?? hardware?.host?.storage_free_mb ?? 0;
   const storageUsedPct = storageTotalMb > 0
     ? ((storageTotalMb - storageFreeMb) / storageTotalMb) * 100
     : 0;

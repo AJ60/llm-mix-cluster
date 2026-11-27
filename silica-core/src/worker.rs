@@ -190,6 +190,8 @@ pub async fn run_worker_mode(opts: WorkerCliOptions) -> Result<(), String> {
                     storage_free_mb: Some(snap.storage_free_mb),
                     link_bandwidth_mbps: None,
                     pkt_loss_pct: None,
+                    worker_kind: None,
+                    rtt_ms: None,
                 };
 
                 let mut req = client

@@ -23,6 +23,7 @@ pub enum NodeOs {
     Linux,
     Android,
     EdgeArm,
+    WebGPU,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ pub enum LinkTransport {
     UsbRndis,
     Ethernet25G,
     WifiLan,
+    WebGPU,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,7 +311,7 @@ pub fn compute_safe_caps(node: &LiveNodeInput) -> (f64, f64, ThermalState) {
                 .min((node.total_ram_mb - reserve).max(0.0))
                 .max(0.0)
         }
-        NodeOs::Linux | NodeOs::EdgeArm => {
+        NodeOs::Linux | NodeOs::EdgeArm | NodeOs::WebGPU => {
             let reserve = (node.total_ram_mb * 0.18).max(768.0);
             (node.available_ram_mb * 0.85)
                 .min((node.total_ram_mb - reserve).max(0.0))
@@ -524,7 +526,10 @@ pub fn compute_cluster_plan(
         let mut prune_reason = None;
 
         if !node.is_master {
-            if *thermal_state == ThermalState::EmergencyOffload || (*safe_cap_mb + *vram_safe_mb) < 256.0 {
+            if node.os == NodeOs::WebGPU {
+                pruned = true;
+                prune_reason = Some("Browser WebGPU worker cannot serve llama.cpp RPC layers".to_string());
+            } else if *thermal_state == ThermalState::EmergencyOffload || (*safe_cap_mb + *vram_safe_mb) < 256.0 {
                 pruned = true;
                 prune_reason = Some("Thermal offload or insufficient safe RAM cap".to_string());
             } else if fast_tier_fits

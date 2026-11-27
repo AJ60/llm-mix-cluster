@@ -214,7 +214,7 @@ async fn hardware_handler(State(state): State<AppState>) -> impl IntoResponse {
             "id": n.node_id,
             "ip": n.ip,
             "rpcPort": n.rpc_port,
-            "platform": match n.os { NodeOs::Android => "Android", NodeOs::Windows => "Windows", NodeOs::Linux => "Linux", NodeOs::EdgeArm => "Edge ARM" },
+            "platform": match n.os { NodeOs::Android => "Android", NodeOs::Windows => "Windows", NodeOs::Linux => "Linux", NodeOs::EdgeArm => "Edge ARM", NodeOs::WebGPU => "WebGPU" },
             "label": n.label,
             "isOnline": true,
             "isWorkerRunning": true,
@@ -812,12 +812,14 @@ fn plan_to_ui(
                 NodeOs::Android => "Android",
                 NodeOs::Windows => "Desktop",
                 NodeOs::EdgeArm => "Edge ARM",
+                NodeOs::WebGPU => "WebGPU",
                 NodeOs::Linux => "Desktop",
             };
             let os_type = match input.map(|i| i.os).unwrap_or(NodeOs::Linux) {
                 NodeOs::Android => "android",
                 NodeOs::Windows => "windows",
                 NodeOs::EdgeArm => "edge-arm",
+                NodeOs::WebGPU => "webgpu",
                 NodeOs::Linux => "linux",
             };
             serde_json::json!({
@@ -834,6 +836,7 @@ fn plan_to_ui(
                     LinkTransport::UsbC | LinkTransport::UsbRndis => "USB-C Tunnel",
                     LinkTransport::Ethernet25G => "Ethernet 2.5G",
                     LinkTransport::WifiLan => "Wi-Fi LAN",
+                LinkTransport::WebGPU => "WebGPU Browser",
                 },
                 "totalRamMb": input.map(|i| i.total_ram_mb).unwrap_or(0.0),
                 "availableRamMb": input.map(|i| i.available_ram_mb).unwrap_or(0.0),
@@ -1305,11 +1308,47 @@ async fn tuning_auto_apply_handler(
         .or_else(|| payload.get("patch"))
         .unwrap_or(&payload);
     cfg = merge_load_config(&cfg, patch_source);
-    *state.load_config.write().await = cfg;
+    *state.load_config.write().await = cfg.clone();
+
+    let reload_requested = payload
+        .get("reloadIfRunning")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let status = state.engine.status().await;
+    let reloaded = if reload_requested && status.running {
+        let active_card = state.active_card.read().await.clone();
+        match active_card {
+            Some(card) => {
+                let nodes = collect_nodes(&state).await;
+                let plan = compute_cluster_plan(&card, &nodes, &cfg, None);
+                let binary = std::env::var("SILICA_LLAMA_SERVER_BINARY")
+                    .unwrap_or_else(|_| "llama-server".to_string());
+                state
+                    .engine
+                    .hot_reload_llama_server(
+                        &binary,
+                        plan.cli_args,
+                        card.name.clone(),
+                        card.mmproj_path.is_some(),
+                        Duration::from_secs(5),
+                    )
+                    .await
+                    .is_ok()
+            }
+            None => false,
+        }
+    } else {
+        false
+    };
+
     Json(serde_json::json!({
         "ok": true,
-        "reloaded": false,
-        "message": "Rust planner tuning configuration applied",
+        "reloaded": reloaded,
+        "message": if reloaded {
+            "Rust planner tuning applied and engine reloaded"
+        } else {
+            "Rust planner tuning configuration applied"
+        },
         "snapshot": build_snapshot(&state).await
     }))
 }

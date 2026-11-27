@@ -163,4 +163,32 @@ describe('clusterd canonical HTTP API', () => {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
     }
   });
+
+  it('registers an authorized browser WebGPU worker without a TCP handshake', async () => {
+    const res = await fetch(`${harness.baseUrl}/api/cluster/nodes/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workerId: 'browser-test',
+        label: 'Browser WebGPU Worker',
+        osType: 'webgpu',
+        workerKind: 'browser',
+        linkType: 'WebGPU Browser',
+        ip: '127.0.0.1',
+        rpcPort: 0,
+        totalRamMb: 4096,
+        availableRamMb: 4096,
+        vramFreeMb: 1024,
+        vramTotalMb: 1024,
+        computeTflops: 2.5,
+        rttMs: 2.4,
+        linkBandwidthMbps: 900,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.node.transport, 'WebGPU');
+    assert.equal(body.node.handshake_verified, false);
+  });
 });

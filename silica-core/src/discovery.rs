@@ -5,6 +5,7 @@
 //!   GGUF/RPC v9/v1.0.0 handshake AND an active heartbeat (< 30s TTL).
 
 use crate::planner::{LinkTransport, LiveNodeInput, NodeOs};
+use crate::protocol::{GgufHandshakeFrame, LinkQuality, WorkerHandshakeStatus};
 use crate::protocol::probe_worker_link_quality;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -59,6 +60,10 @@ pub struct WorkerRegisterRequest {
     pub link_bandwidth_mbps: Option<f64>,
     #[serde(alias = "pktLossPct", default)]
     pub pkt_loss_pct: Option<f64>,
+    #[serde(alias = "workerKind", default)]
+    pub worker_kind: Option<String>,
+    #[serde(alias = "rttMs", default)]
+    pub rtt_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,24 +95,50 @@ impl WorkerRegistry {
             .map_err(|_| format!("Invalid worker IP address: {}", req.ip))?;
         let sock_addr = SocketAddr::new(ip, port);
 
-        let secret = self.cluster_secret.clone();
-        let (frame, link) = tokio::task::spawn_blocking(move || {
-            probe_worker_link_quality(sock_addr, &secret, Duration::from_millis(1800))
-        })
-        .await
-        .map_err(|e| format!("Handshake task panicked: {}", e))??;
+        let browser_worker = req.worker_kind.as_deref() == Some("browser")
+            || req.os_type.eq_ignore_ascii_case("webgpu");
+        let (frame, link) = if browser_worker {
+            (
+                GgufHandshakeFrame {
+                    rpc_version: 0,
+                    version_tag: "WebGPU".to_string(),
+                    safe_cap_mb: req.total_ram_mb.min(u32::MAX as f64) as u32,
+                    big_cores: req.big_cores.unwrap_or(4).min(255),
+                    flags: 0,
+                    status: WorkerHandshakeStatus::Ready,
+                },
+                LinkQuality {
+                    rtt_ms: req.rtt_ms.unwrap_or(0.0),
+                    rtt_p95_ms: req.rtt_ms.unwrap_or(0.0),
+                    bandwidth_mbps: req.link_bandwidth_mbps.unwrap_or(0.0),
+                    pkt_loss_pct: 0.0,
+                },
+            )
+        } else {
+            let secret = self.cluster_secret.clone();
+            tokio::task::spawn_blocking(move || {
+                probe_worker_link_quality(sock_addr, &secret, Duration::from_millis(1800))
+            })
+            .await
+            .map_err(|e| format!("Handshake task panicked: {}", e))??
+        };
 
         let os = match req.os_type.to_ascii_lowercase().as_str() {
             "windows" => NodeOs::Windows,
             "linux" => NodeOs::Linux,
             "edge-arm" | "rpi" | "sbc" => NodeOs::EdgeArm,
+            "webgpu" => NodeOs::WebGPU,
             _ => NodeOs::Android,
         };
-        let transport = match req.link_type.to_ascii_lowercase().as_str() {
-            s if s.contains("usb") && s.contains("rndis") => LinkTransport::UsbRndis,
-            s if s.contains("usb") => LinkTransport::UsbC,
-            s if s.contains("eth") => LinkTransport::Ethernet25G,
-            _ => LinkTransport::WifiLan,
+        let transport = if browser_worker {
+            LinkTransport::WebGPU
+        } else {
+            match req.link_type.to_ascii_lowercase().as_str() {
+                s if s.contains("usb") && s.contains("rndis") => LinkTransport::UsbRndis,
+                s if s.contains("usb") => LinkTransport::UsbC,
+                s if s.contains("eth") => LinkTransport::Ethernet25G,
+                _ => LinkTransport::WifiLan,
+            }
         };
 
         let node = LiveNodeInput {
@@ -144,7 +175,7 @@ impl WorkerRegistry {
             compute_tflops: req.compute_tflops.unwrap_or_else(|| {
                 (req.mem_bw_gbps.unwrap_or(28.0) / 45.0 * 10.0).round() / 10.0
             }),
-            handshake_verified: true,
+            handshake_verified: !browser_worker,
             heartbeat_age_s: 0,
         };
 

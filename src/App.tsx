@@ -184,7 +184,10 @@ export function App() {
       if (modelsRes && modelsRes.ok) {
         const mData = (await modelsRes.json()) as { models?: GgufModelPreset[] };
         if (mData.models && mData.models.length > 0) {
-          setAvailableModels(mData.models);
+          setAvailableModels((prev) => {
+            const seen = new Set(prev.map((model) => model.id));
+            return [...prev, ...mData.models!.filter((model) => !seen.has(model.id))];
+          });
         }
       }
     } catch {
@@ -330,7 +333,7 @@ export function App() {
       }
       return { ok: true, message: 'Auto-Tune parameters updated locally.' };
     },
-    [tuningConfig, engineStatus?.running, applyServerSnapshot]
+    [engineStatus?.running, applyServerSnapshot]
   );
 
   const handleResetDefaults = useCallback(() => {

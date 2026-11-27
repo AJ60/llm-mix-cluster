@@ -787,7 +787,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({
       let buffer = '';
       const toolCallsAccum: Record<number, { id: string; name: string; args: string }> = {};
 
-      while (true) {
+      sse: while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -798,13 +798,14 @@ export const ChatTab: React.FC<ChatTabProps> = ({
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith(':')) continue;
-          if (trimmed === 'data: [DONE]') break;
+          if (trimmed === 'data: [DONE]') break sse;
           if (trimmed.startsWith('data: ')) {
             try {
               const parsed = JSON.parse(trimmed.slice(6));
               const delta = parsed.choices?.[0]?.delta;
               const chunk = delta?.content || '';
               const reasoningChunk = delta?.reasoning_content || '';
+              const usageTokens = parsed.usage?.completion_tokens as number | undefined;
 
               if (delta?.tool_calls) {
                 for (const tc of delta.tool_calls) {
@@ -823,7 +824,11 @@ export const ChatTab: React.FC<ChatTabProps> = ({
                   const ttft = Math.round(firstTokenTime - requestStart);
                   setLiveMetrics((prev) => ({ ...prev, ttftMs: ttft }));
                 }
-                tokenCount += 1;
+                if (typeof usageTokens === 'number' && usageTokens > 0) {
+                  tokenCount = usageTokens;
+                } else {
+                  tokenCount += 1;
+                }
 
                 if (reasoningChunk) {
                   rawReasoning += reasoningChunk;

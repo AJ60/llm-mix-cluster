@@ -93,6 +93,12 @@ export interface LiveHardwareProbe {
   storageTotalMb?: number;
   storageFreeMb?: number;
   connectedDevices: ConnectedDeviceInfo[];
+  host?: {
+    storage_total_mb?: number;
+    storage_free_mb?: number;
+    total_ram_mb?: number;
+    available_ram_mb?: number;
+  };
 }
 
 export type ModelPresetId =
@@ -481,11 +487,11 @@ export interface EngineRuntimeStatus {
   upstreamUrl: string | null;
   serverType: 'llama-server' | 'ollama' | 'lm-studio' | 'offline';
   hasMmproj: boolean;
-  mmprojPath: string | null;
+  mmprojPath?: string | null;
   lastEvent: string;
   lastError?: string | null;
   detectedLlamaBin?: string | null;
-  reloadProgressPct: number;
+  reloadProgressPct?: number;
 }
 
 export interface LearnedEmaProfile {
@@ -511,7 +517,7 @@ export interface RuntimeClusterSnapshot {
   engineStatus?: EngineRuntimeStatus;
   learnedProfile?: LearnedEmaProfile | null;
   tuningAdvice?: ClusterTuningAdvice | null;
-  updatedAt: string;
+  updatedAt?: string;
 }
 
 export interface NodeBenchmarkEntry {
