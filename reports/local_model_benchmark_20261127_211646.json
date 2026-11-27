@@ -1,0 +1,765 @@
+{
+  "generated_at": "2026-11-27T21:16:46+05:30",
+  "environment": {
+    "platform": "win32",
+    "machine": "ALOJYOTI",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "cores": 16,
+    "ram_total_mb": 32093.81640625,
+    "ram_available_mb": 16808.3125,
+    "gpu_name": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "vram_total_mb": 4096.0,
+    "llama_server": "C:\\Users\\alojy\\AppData\\Local\\Microsoft\\WinGet\\Packages\\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\\llama-server.EXE"
+  },
+  "workers": [
+    {
+      "node_id": "android-samsung-sm-g990e-r9s",
+      "rpc_port": 50055,
+      "rtt_p95_ms": 18.345299999999998,
+      "bandwidth_mbps": 118.73404821487209,
+      "pkt_loss_pct": 0.0
+    }
+  ],
+  "models": [
+    {
+      "path": "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+      "size_mb": 7272.7,
+      "name": "Hf",
+      "architecture": "qwen35",
+      "arch_mode": "Dense",
+      "quant": "Q4_K_M",
+      "layers": 64,
+      "params_b": 13.148291255172415,
+      "active_params_b": 13.148291255172415,
+      "native_context": 262144,
+      "mmproj": true
+    }
+  ],
+  "results": [
+    {
+      "model": {
+        "path": "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+        "size_mb": 7272.7,
+        "name": "Hf",
+        "architecture": "qwen35",
+        "arch_mode": "Dense",
+        "quant": "Q4_K_M",
+        "layers": 64,
+        "params_b": 13.148291255172415,
+        "active_params_b": 13.148291255172415,
+        "native_context": 262144,
+        "mmproj": true
+      },
+      "configs": [
+        {
+          "config": "g16-q8-4k",
+          "settings": {
+            "name": "g16-q8-4k",
+            "contextLength": 4096,
+            "kvCacheQuant": "q8_0",
+            "gpuOffloadLayers": 16,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": true
+          },
+          "load_s": 7.79,
+          "measured": [
+            {
+              "elapsed_s": 14.996,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.73,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 14.979,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.74,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 8.857,
+            "total_s": 15.121,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 3.7
+          },
+          "tokens_per_s": 3.74,
+          "error": null,
+          "plan": {
+            "tier": "S",
+            "fit": "Fast",
+            "coverage_pct": 100.0,
+            "effective_context": 4096,
+            "kv_cache_total_mb": 453.3,
+            "total_safe_pool_mb": 18090.78160546875,
+            "needed_mb": 15810.497517903645,
+            "estimated_tok_per_s": 20.638057260873953,
+            "estimated_handoff_ms": 28.0,
+            "use_no_mmap": false,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "4096",
+              "-ctk",
+              "q8_0",
+              "-ctv",
+              "q8_0",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "16",
+              "-t",
+              "8",
+              "--jinja",
+              "-fa",
+              "on",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "96.0,4.0"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 61,
+                "layer_start": 0,
+                "layer_end": 60,
+                "share_pct": 96.0,
+                "kv_cache_mb": 432.1,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 95.4,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 3,
+                "layer_start": 61,
+                "layer_end": 63,
+                "share_pct": 4.0,
+                "kv_cache_mb": 21.2,
+                "rtt_ms": 13.1671,
+                "bandwidth_mbps": 118.00447900606578,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 4.6,
+                "handoff_count": 1
+              }
+            ]
+          }
+        },
+        {
+          "config": "g16-q4-4k",
+          "settings": {
+            "name": "g16-q4-4k",
+            "contextLength": 4096,
+            "kvCacheQuant": "q4_0",
+            "gpuOffloadLayers": 16,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": true
+          },
+          "load_s": 7.83,
+          "measured": [
+            {
+              "elapsed_s": 15.092,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.71,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 15.101,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.71,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 8.852,
+            "total_s": 15.088,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 3.71
+          },
+          "tokens_per_s": 3.71,
+          "error": null,
+          "plan": {
+            "tier": "S",
+            "fit": "Fast",
+            "coverage_pct": 100.0,
+            "effective_context": 4096,
+            "kv_cache_total_mb": 240.0,
+            "total_safe_pool_mb": 18134.06363671875,
+            "needed_mb": 15597.164184570312,
+            "estimated_tok_per_s": 20.90398928628162,
+            "estimated_handoff_ms": 53.6,
+            "use_no_mmap": true,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "4096",
+              "-ctk",
+              "q4_0",
+              "-ctv",
+              "q4_0",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "16",
+              "-t",
+              "8",
+              "--jinja",
+              "-fa",
+              "on",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "-lm",
+              "none",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "97.3,2.7"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 62,
+                "layer_start": 0,
+                "layer_end": 61,
+                "share_pct": 97.3,
+                "kv_cache_mb": 232.5,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 96.5,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 2,
+                "layer_start": 62,
+                "layer_end": 63,
+                "share_pct": 2.700000000000003,
+                "kv_cache_mb": 7.5,
+                "rtt_ms": 25.6826,
+                "bandwidth_mbps": 89.73654370327897,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 3.5,
+                "handoff_count": 1
+              }
+            ]
+          }
+        },
+        {
+          "config": "g16-f16-4k",
+          "settings": {
+            "name": "g16-f16-4k",
+            "contextLength": 4096,
+            "kvCacheQuant": "f16",
+            "gpuOffloadLayers": 16,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": true
+          },
+          "load_s": 7.79,
+          "measured": [
+            {
+              "elapsed_s": 14.858,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.77,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 14.983,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.74,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 8.373,
+            "total_s": 14.203,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 3.94
+          },
+          "tokens_per_s": 3.75,
+          "error": null,
+          "plan": {
+            "tier": "A",
+            "fit": "Best Fit",
+            "coverage_pct": 95.9,
+            "effective_context": 4096,
+            "kv_cache_total_mb": 853.3,
+            "total_safe_pool_mb": 18011.46754296875,
+            "needed_mb": 16210.497517903646,
+            "estimated_tok_per_s": 20.88353297663488,
+            "estimated_handoff_ms": 45.6,
+            "use_no_mmap": false,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "4096",
+              "-ctk",
+              "f16",
+              "-ctv",
+              "f16",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "16",
+              "-t",
+              "8",
+              "--jinja",
+              "-fa",
+              "on",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "97.2,2.8"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 62,
+                "layer_start": 0,
+                "layer_end": 61,
+                "share_pct": 97.2,
+                "kv_cache_mb": 826.7,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 96.2,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 2,
+                "layer_start": 62,
+                "layer_end": 63,
+                "share_pct": 2.799999999999997,
+                "kv_cache_mb": 26.7,
+                "rtt_ms": 21.9854,
+                "bandwidth_mbps": 130.19238768073205,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 3.8,
+                "handoff_count": 1
+              }
+            ]
+          }
+        },
+        {
+          "config": "g8-q8-8k",
+          "settings": {
+            "name": "g8-q8-8k",
+            "contextLength": 8192,
+            "kvCacheQuant": "q8_0",
+            "gpuOffloadLayers": 8,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": true
+          },
+          "load_s": 7.31,
+          "measured": [
+            {
+              "elapsed_s": 17.604,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.18,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 17.516,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.2,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 10.248,
+            "total_s": 17.186,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 3.26
+          },
+          "tokens_per_s": 3.19,
+          "error": null,
+          "plan": {
+            "tier": "A",
+            "fit": "Best Fit",
+            "coverage_pct": 95.9,
+            "effective_context": 8192,
+            "kv_cache_total_mb": 906.7,
+            "total_safe_pool_mb": 18069.33551171875,
+            "needed_mb": 16263.830851236979,
+            "estimated_tok_per_s": 20.88353297663488,
+            "estimated_handoff_ms": 47.8,
+            "use_no_mmap": false,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "8192",
+              "-ctk",
+              "q8_0",
+              "-ctv",
+              "q8_0",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "8",
+              "-t",
+              "8",
+              "--jinja",
+              "-fa",
+              "on",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "97.2,2.8"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 62,
+                "layer_start": 0,
+                "layer_end": 61,
+                "share_pct": 97.2,
+                "kv_cache_mb": 878.3,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 96.3,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 2,
+                "layer_start": 62,
+                "layer_end": 63,
+                "share_pct": 2.799999999999997,
+                "kv_cache_mb": 28.3,
+                "rtt_ms": 23.0132,
+                "bandwidth_mbps": 117.25365657288543,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 3.7,
+                "handoff_count": 1
+              }
+            ]
+          }
+        },
+        {
+          "config": "cpu-q8-4k",
+          "settings": {
+            "name": "cpu-q8-4k",
+            "contextLength": 4096,
+            "kvCacheQuant": "q8_0",
+            "gpuOffloadLayers": 0,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": false
+          },
+          "load_s": 7.84,
+          "measured": [
+            {
+              "elapsed_s": 18.631,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.01,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 18.38,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.05,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 11.072,
+            "total_s": 18.819,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 2.98
+          },
+          "tokens_per_s": 3.03,
+          "error": null,
+          "plan": {
+            "tier": "A",
+            "fit": "Best Fit",
+            "coverage_pct": 98.7,
+            "effective_context": 4096,
+            "kv_cache_total_mb": 453.3,
+            "total_safe_pool_mb": 18063.12144921875,
+            "needed_mb": 15810.497517903645,
+            "estimated_tok_per_s": 20.90398928628162,
+            "estimated_handoff_ms": 47.4,
+            "use_no_mmap": false,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "4096",
+              "-ctk",
+              "q8_0",
+              "-ctv",
+              "q8_0",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "0",
+              "-t",
+              "8",
+              "--jinja",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "97.3,2.7"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 62,
+                "layer_start": 0,
+                "layer_end": 61,
+                "share_pct": 97.3,
+                "kv_cache_mb": 439.2,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 96.3,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 2,
+                "layer_start": 62,
+                "layer_end": 63,
+                "share_pct": 2.700000000000003,
+                "kv_cache_mb": 14.2,
+                "rtt_ms": 22.855400000000003,
+                "bandwidth_mbps": 121.8431434065966,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 3.7,
+                "handoff_count": 1
+              }
+            ]
+          }
+        },
+        {
+          "config": "g16-q8-16k",
+          "settings": {
+            "name": "g16-q8-16k",
+            "contextLength": 16384,
+            "kvCacheQuant": "q8_0",
+            "gpuOffloadLayers": 16,
+            "threads": 8,
+            "batchSize": 512,
+            "ubatchSize": 256,
+            "enableFlashAttn": true
+          },
+          "load_s": 7.49,
+          "measured": [
+            {
+              "elapsed_s": 14.981,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.74,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            },
+            {
+              "elapsed_s": 14.931,
+              "completion_tokens": 56,
+              "prompt_tokens": 64,
+              "tokens_per_s": 3.75,
+              "text": "Distributed inference is useful because it lets multiple devices or servers share the workload, improving speed, scalability, and reliability."
+            }
+          ],
+          "stream": {
+            "ttft_s": 8.776,
+            "total_s": 14.966,
+            "completion_tokens": 56,
+            "prompt_tokens": 64,
+            "tokens_per_s": 3.74
+          },
+          "tokens_per_s": 3.74,
+          "error": null,
+          "plan": {
+            "tier": "A",
+            "fit": "Best Fit",
+            "coverage_pct": 91.6,
+            "effective_context": 16384,
+            "kv_cache_total_mb": 1813.3,
+            "total_safe_pool_mb": 17955.97769921875,
+            "needed_mb": 17170.497517903645,
+            "estimated_tok_per_s": 20.556232022286977,
+            "estimated_handoff_ms": 40.0,
+            "use_no_mmap": false,
+            "cli_args": [
+              "-m",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-Q2_0.gguf",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              "8080",
+              "-c",
+              "16384",
+              "-ctk",
+              "q8_0",
+              "-ctv",
+              "q8_0",
+              "-b",
+              "512",
+              "-ub",
+              "256",
+              "--mmproj",
+              "C:\\Users\\alojy\\Downloads\\Models\\prism-ml\\Ternary-Bonsai-2-27B-gguf\\Ternary-Bonsai-2-27B-mmproj-BF16.gguf",
+              "-ngl",
+              "16",
+              "-t",
+              "8",
+              "--jinja",
+              "-fa",
+              "on",
+              "--cont-batching",
+              "--cache-reuse",
+              "256",
+              "--kv-unified",
+              "--slot-save-path",
+              "./.silica-kv-cache",
+              "--rpc",
+              "127.0.0.1:50055",
+              "--tensor-split",
+              "95.6,4.4"
+            ],
+            "nodes": [
+              {
+                "label": "ALOJYOTI (Master)",
+                "role": "Master",
+                "allocated_layers": 61,
+                "layer_start": 0,
+                "layer_end": 60,
+                "share_pct": 95.6,
+                "kv_cache_mb": 1728.3,
+                "rtt_ms": 0.2,
+                "bandwidth_mbps": 10000.0,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 95.9,
+                "handoff_count": 1
+              },
+              {
+                "label": "samsung SM-G990E (Android)",
+                "role": "Worker",
+                "allocated_layers": 3,
+                "layer_start": 61,
+                "layer_end": 63,
+                "share_pct": 4.400000000000006,
+                "kv_cache_mb": 85.0,
+                "rtt_ms": 19.071399999999997,
+                "bandwidth_mbps": 114.68307221174089,
+                "pkt_loss_pct": 0.0,
+                "placement_score": 4.1,
+                "handoff_count": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
