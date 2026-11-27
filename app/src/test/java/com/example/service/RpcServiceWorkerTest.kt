@@ -28,6 +28,15 @@ class RpcServiceWorkerTest {
     }
 
     @Test
+    fun `thermal zone parser rejects bogus clamped soc sensor`() {
+        assertEquals(27.0f, HardwareProbe.parseThermalZoneCelsius(27000)!!, 0.001f)
+        assertEquals(37.0f, HardwareProbe.parseThermalZoneCelsius(37000)!!, 0.001f)
+        assertEquals(45.0f, HardwareProbe.parseThermalZoneCelsius(45)!!, 0.001f)
+        assertNull(HardwareProbe.parseThermalZoneCelsius(100))
+        assertNull(HardwareProbe.parseThermalZoneCelsius(95000))
+    }
+
+    @Test
     fun `readFully assembles fragmented bandwidth probe frames`() {
         val data = byteArrayOf(0x42, 0x57, 0x50, 0x52, 0x00, 0x04, 0x00, 0x00)
         val target = ByteArray(8)

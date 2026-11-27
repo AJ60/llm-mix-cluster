@@ -2016,6 +2016,14 @@ class RpcService : Service(), ComponentCallbacks2 {
                 }
             }
 
+            val loopbackMaster = probeLoopbackMaster()
+            if (loopbackMaster != null) {
+                discoveredMaster = loopbackMaster.first
+                if (loopbackMaster.second.isNotBlank()) discoveredSecret = loopbackMaster.second
+                useUsb = true
+                appendLog("Preferring ADB loopback master at ${loopbackMaster.first}")
+            }
+
             if (discoveredMaster != null) {
                 val master = discoveredMaster!!
                 lastPairedMasterHostPort = master
@@ -2052,6 +2060,24 @@ class RpcService : Service(), ComponentCallbacks2 {
                 startMasterHeartbeatLoop("127.0.0.1:3000", true)
             }
         }
+    }
+
+    private suspend fun probeLoopbackMaster(): Pair<String, String>? {
+        return runCatching {
+            val conn = (java.net.URL("http://127.0.0.1:3000/api/cluster/beacon").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 400
+                readTimeout = 600
+            }
+            try {
+                if (conn.responseCode in 200..299) {
+                    val json = org.json.JSONObject(conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() })
+                    "127.0.0.1:${json.optInt("port", 3000)}" to json.optString("secret", "")
+                } else null
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
     }
 
     private suspend fun probeSubnetHttpBeaconFallback(): Pair<String, String>? {
@@ -2877,48 +2903,48 @@ object HardwareProbe {
      * Scans readable non-root Linux/Android thermal zones (/sys/class/thermal/thermal_zoneN)
      * prioritizing internal SoC/CPU/skin/GPU sensors to capture real internal heat before battery lags.
      */
+    internal fun parseThermalZoneCelsius(raw: Long): Float? {
+        val celsius = when {
+            raw > 1000L -> raw / 1000.0f
+            raw > 150L -> raw / 10.0f
+            else -> raw.toFloat()
+        }
+        return if (celsius in 5.0f..85.0f) celsius else null
+    }
+
     fun readInternalThermalSensors(): Pair<Float?, String?> {
         return try {
-            val thermalDir = File("/sys/class/thermal")
-            val zones = thermalDir.listFiles { file -> file.name.startsWith("thermal_zone") } ?: return null to null
+            val zones = File("/sys/class/thermal")
+                .listFiles { file -> file.name.startsWith("thermal_zone") }
+                ?: return null to null
             val preferredKeywords = listOf("cpu", "soc", "tsens", "skin", "ap_ntc", "gpu", "mtktscpu", "xo_therm", "quiet_therm", "exynos")
-            var bestPreferredTemp: Float? = null
-            var bestPreferredName: String? = null
-            var bestFallbackTemp: Float? = null
-            var bestFallbackName: String? = null
+            val preferred = mutableListOf<Pair<Float, String>>()
+            val fallback = mutableListOf<Pair<Float, String>>()
 
             for (zone in zones) {
-                val tempFile = File(zone, "temp")
-                if (!tempFile.canRead()) continue
-                val raw = runCatching { tempFile.readText().trim().toLongOrNull() }.getOrNull() ?: continue
-                val celsius = when {
-                    raw > 1000L -> raw / 1000.0f
-                    raw > 150L -> raw / 10.0f
-                    else -> raw.toFloat()
-                }
-                if (celsius !in 15.0f..110.0f) continue
-
-                val typeFile = File(zone, "type")
+                val raw = runCatching { File(zone, "temp").readText().trim().toLongOrNull() }.getOrNull() ?: continue
+                val celsius = parseThermalZoneCelsius(raw) ?: continue
                 val zoneType = runCatching {
+                    val typeFile = File(zone, "type")
                     if (typeFile.canRead()) typeFile.readText().trim() else zone.name
                 }.getOrDefault(zone.name)
-                val lowerType = zoneType.lowercase()
-
-                if (preferredKeywords.any { lowerType.contains(it) }) {
-                    if (bestPreferredTemp == null || celsius > bestPreferredTemp) {
-                        bestPreferredTemp = celsius
-                        bestPreferredName = zoneType
-                    }
-                } else if (bestFallbackTemp == null || celsius > bestFallbackTemp) {
-                    bestFallbackTemp = celsius
-                    bestFallbackName = zoneType
+                val entry = celsius to zoneType
+                if (preferredKeywords.any { zoneType.lowercase().contains(it) }) {
+                    preferred.add(entry)
+                } else {
+                    fallback.add(entry)
                 }
             }
-            if (bestPreferredTemp != null) {
-                bestPreferredTemp to bestPreferredName
-            } else {
-                bestFallbackTemp to bestFallbackName
+
+            fun median(entries: List<Pair<Float, String>>): Pair<Float?, String?> {
+                if (entries.isEmpty()) return null to null
+                val sorted = entries.sortedBy { it.first }
+                val chosen = sorted[sorted.size / 2]
+                return chosen.first to chosen.second
             }
+
+            val preferredResult = median(preferred)
+            if (preferredResult.first != null) preferredResult else median(fallback)
         } catch (_: Exception) {
             null to null
         }
