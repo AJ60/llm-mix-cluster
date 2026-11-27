@@ -27,14 +27,14 @@ jobs:
       - name: Type check (Lint)
         run: npm run lint
 
+      - name: Build production web bundle
+        run: npm run build
+
       - name: Build clusterd for API harness tests
         run: cargo build --manifest-path silica-core/Cargo.toml
 
       - name: Run unit & API test suite
         run: npm test
-
-      - name: Build production web bundle
-        run: npm run build
 
   rust-verify:
     name: Pure-Rust clusterd Engine (Build & Test)
